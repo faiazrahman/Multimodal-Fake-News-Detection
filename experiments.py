@@ -28,17 +28,17 @@ NUM_CPUS = 0 # 24 on Yale Tangra server; Set to 0 and comment out next line if m
 
 # Configs
 # NUM_CLASSES=2, BATCH_SIZE=32, LEARNING_RATE=1e-5
-# NUM_CLASSES=6, BATCH_SIZE=32, LEARNING_RATE=1e-4
+# NUM_CLASSES=6, BATCH_SIZE=32, LEARNING_RATE=1e-3
 NUM_CLASSES = 6
 BATCH_SIZE = 32
-LEARNING_RATE = 1e-4 # 1e-3 1e-5
+LEARNING_RATE = 1e-3 # 1e-3 1e-5
+DROPOUT_P = 0.1
 
 DATA_PATH = "./data"
 IMAGES_DIR = os.path.join(DATA_PATH, "images")
 IMAGE_EXTENSION = ".jpg"
 RESNET_OUT_DIM = 2048
 SENTENCE_TRANSFORMER_EMBEDDING_DIM = 768
-
 
 losses = []
 
@@ -72,7 +72,7 @@ class MultimodalDataset(Dataset):
 
     def __getitem__(self, idx):
         """
-        Currently returning text embedding Tensor and image RGB Tensor
+        Returns a text embedding Tensor, image RGB Tensor, and label Tensor
         For data parallel training, the embedding step must happen in the
         torch.utils.data.Dataset __getitem__() method; otherwise, any data that
         is not embedded will not be distributed across the multiple GPUs
@@ -133,7 +133,8 @@ class JointVisualTextualModel(nn.Module):
             image_module,
             text_feature_dim,
             image_feature_dim,
-            fusion_output_size
+            fusion_output_size,
+            dropout_p,
         ):
         super(JointVisualTextualModel, self).__init__()
         self.text_module = text_module
@@ -142,13 +143,15 @@ class JointVisualTextualModel(nn.Module):
             out_features=fusion_output_size)
         self.fc = torch.nn.Linear(in_features=fusion_output_size, out_features=num_classes)
         self.loss_fn = loss_fn
+        self.dropout = torch.nn.Dropout(dropout_p)
 
     def forward(self, text, image, label):
         text_features = torch.nn.functional.relu(self.text_module(text))
         image_features = torch.nn.functional.relu(self.image_module(image))
         # print(text_features.size(), image_features.size()) # torch.Size([32, 300]) torch.Size([16, 300])
         combined = torch.cat([text_features, image_features], dim=1)
-        fused = torch.nn.functional.relu(self.fusion(combined)) # TODO add dropout
+        fused = self.dropout(
+            torch.nn.functional.relu(self.fusion(combined))) # TODO add dropout
         logits = self.fc(fused)
         pred = torch.nn.functional.softmax(logits, dim=1)
         loss = self.loss_fn(pred, label)
@@ -244,7 +247,8 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
             image_module=image_module,
             text_feature_dim=self.text_feature_dim,
             image_feature_dim=self.image_feature_dim,
-            fusion_output_size=self.hparams.get("fusion_output_size", 512)
+            fusion_output_size=self.hparams.get("fusion_output_size", 512),
+            dropout_p=self.hparams.get("dropout_p", DROPOUT_P)
         )
 
 class PrintCallback(Callback):
