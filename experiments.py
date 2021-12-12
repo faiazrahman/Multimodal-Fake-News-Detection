@@ -27,10 +27,11 @@ NUM_CPUS = 0 # 24 on Yale Tangra server; Set to 0 and comment out next line if m
 # torch.multiprocessing.set_start_method('spawn')
 
 # Configs
-# NUM_CLASSES=2, BATCH_SIZE=32
-# NUM_CLASSES=6, BATCH_SIZE=32
+# NUM_CLASSES=2, BATCH_SIZE=32, LEARNING_RATE=1e-5
+# NUM_CLASSES=6, BATCH_SIZE=32, LEARNING_RATE=1e-4
 NUM_CLASSES = 6
 BATCH_SIZE = 32
+LEARNING_RATE = 1e-4 # 1e-3 1e-5
 
 DATA_PATH = "./data"
 IMAGES_DIR = os.path.join(DATA_PATH, "images")
@@ -38,7 +39,6 @@ IMAGE_EXTENSION = ".jpg"
 RESNET_OUT_DIM = 2048
 SENTENCE_TRANSFORMER_EMBEDDING_DIM = 768
 
-LEARNING_RATE = 1e-4 # 1e-3 1e-5
 
 losses = []
 
@@ -160,10 +160,6 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
         super(MultimodalFakeNewsDetectionModel, self).__init__()
         self.hparams.update(hparams) # https://github.com/PyTorchLightning/pytorch-lightning/discussions/7525
 
-        # if "text_embedder" not in self.hparams:
-        #     raise Exception("Must specify a text_embedder in hparams for MultimodalFakeNewsDetectionModel")
-        # self.text_embedder = self.hparams["text_embedder"]
-
         self.embedding_dim = self.hparams.get("embedding_dim", 768)
         self.text_feature_dim = self.hparams.get("text_feature_dim", 300)
         self.image_feature_dim = self.hparams.get("image_feature_dim", self.text_feature_dim)
@@ -181,18 +177,9 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
         # pl.Lightning convention: training_step() defines prediction and
         # accompanying loss for training, independent of forward()
         text, image, label = batch["text"], batch["image"], batch["label"]
-        print(image.size())
+        # print(image.size())
         # print(text, image, label)
 
-        # TODO Get text embeddings before passing to model
-        # TRY using sentence-transformers
-        # embeddings = self.text_embedder.encode(text, convert_to_tensor=True)
-        # print(type(embeddings))
-        # print(embeddings.size())
-        # print(embeddings)
-
-        # TODO Pass to model
-        # pred, loss = self.model(embeddings, image, label)
         pred, loss = self.model(text, image, label)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         print(loss.item())
@@ -327,8 +314,10 @@ if __name__ == "__main__":
         trainer = pl.Trainer()
     logging.debug(trainer)
 
+    # TRAINING
     trainer.fit(model, train_loader)
 
+    # EVALUATION
     # trainer.test(model, dataloaders=test_loader)
     # results = model.test_results
     # print(results)
