@@ -23,13 +23,17 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
 from sentence_transformers import SentenceTransformer
 
+NUM_CPUS = 0 # 24 on Yale Tangra server; Set to 0 and comment out next line if multiprocessing gives errors
+# torch.multiprocessing.set_start_method('spawn')
+
+NUM_CLASSES = 2
 DATA_PATH = "./data"
 IMAGES_DIR = os.path.join(DATA_PATH, "images")
 IMAGE_EXTENSION = ".jpg"
 RESNET_OUT_DIM = 2048
 SENTENCE_TRANSFORMER_EMBEDDING_DIM = 768
 BATCH_SIZE = 32 # ISSUE IS THAT IMAGES ARE DISTRIBUTED ON TWO GPUS, BUT TEXT IS NOT
-LEARNING_RATE = 1e-5 # 1e-3 gets stuck
+LEARNING_RATE = 1e-5 # 1e-3
 
 losses = []
 
@@ -95,8 +99,18 @@ class MultimodalDataset(Dataset):
     @staticmethod
     def _preprocess_df(df):
         def image_exists(row):
+            """ Ensures that image exists and can be opened """
             image_path = os.path.join(IMAGES_DIR, row['id'] + IMAGE_EXTENSION)
-            return os.path.exists(image_path)
+            if not os.path.exists(image_path):
+                return False
+
+            try:
+                image = Image.open(image_path)
+                image.verify()
+                image.close()
+                return True
+            except Exception:
+                return False
 
         df['image_exists'] = df.apply(lambda row: image_exists(row), axis=1)
         df = df[df['image_exists'] == True].drop('image_exists', axis=1)
@@ -180,8 +194,41 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
         losses.append(loss.item())
         return loss
 
+    def training_step_end(self, batch_parts):
+        """
+        Aggregates results when training using a strategy that splits data
+        from each batch across GPUs (e.g. data parallel)
+        """
+        predictions = batch_parts["pred"]
+        losses = batch_parts["loss"]
+        return sum(losses) / len(losses)
+
     def test_step(self, batch, batch_idx):
-        pass
+        text, image, label = batch["text"], batch["image"], batch["label"]
+        pred, loss = self.model(text, image, label)
+        pred_label = torch.argmax(pred, dim=1)
+        accuracy = torch.sum(pred_label == label).item() / (len(label) * 1.0)
+        output = {
+            'test_loss': loss,
+            'test_acc': torch.tensor(accuracy).cuda()
+        }
+        print(loss.item(), output['test_acc'])
+        return output
+
+    def test_epoch_end(self, outputs):
+        avg_loss = torch.stack([x["test_loss"] for x in outputs]).mean()
+        avg_accuracy = torch.stack([x["test_acc"] for x in outputs]).mean()
+        logs = {
+            'test_loss': avg_loss,
+            'test_acc': avg_accuracy
+        }
+        self.test_results = logs # https://github.com/PyTorchLightning/pytorch-lightning/issues/1088
+        return {
+            'avg_test_loss': avg_loss,
+            'avg_test_acc': avg_accuracy,
+            'log': logs,
+            'progress_bar': logs
+        }
 
     # Required for pl.LightningModule
     def configure_optimizers(self):
@@ -235,22 +282,30 @@ def _build_image_transform(image_dim=224):
     return image_transform
 
 if __name__ == "__main__":
-    train_data_path = os.path.join(DATA_PATH, "multimodal_train_100.tsv")
+    train_data_path = os.path.join(DATA_PATH, "multimodal_train_10000.tsv")
+    test_data_path = os.path.join(DATA_PATH, "multimodal_test_100.tsv")
 
     print("Using data:", train_data_path)
     text_embedder = SentenceTransformer('all-mpnet-base-v2')
     image_transform = _build_image_transform()
     train_dataset = MultimodalDataset(
-        train_data_path, text_embedder, image_transform, images_dir=IMAGES_DIR)
-    print(len(train_dataset))
+        train_data_path, text_embedder, image_transform, images_dir=IMAGES_DIR,
+        num_classes=NUM_CLASSES)
+    test_dataset = MultimodalDataset(
+        test_data_path, text_embedder, image_transform, images_dir=IMAGES_DIR,
+        num_classes=NUM_CLASSES)
+    print("train:", len(train_dataset))
+    print("test: ", len(test_dataset))
     # print(train_dataset[0])
 
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, num_workers=NUM_CPUS)
+    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, num_workers=NUM_CPUS)
     print(train_loader)
 
     hparams = {
         # "text_embedder": text_embedder,
         "embedding_dim": SENTENCE_TRANSFORMER_EMBEDDING_DIM,
+        "num_classes": NUM_CLASSES
     }
     model = MultimodalFakeNewsDetectionModel(hparams)
 
@@ -266,4 +321,7 @@ if __name__ == "__main__":
         trainer = pl.Trainer()
     logging.debug(trainer)
 
-    trainer.fit(model, train_loader)
+    # trainer.fit(model, train_loader)
+    trainer.test(model, dataloaders=test_loader)
+    results = model.test_results
+    print(results)
