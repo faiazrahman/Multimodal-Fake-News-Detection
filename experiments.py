@@ -26,14 +26,17 @@ DATA_PATH = "./data"
 IMAGES_DIR = os.path.join(DATA_PATH, "images")
 IMAGE_EXTENSION = ".jpg"
 RESNET_OUT_DIM = 2048
+SENTENCE_TRANSFORMER_EMBEDDING_DIM = 768
+BATCH_SIZE = 32 # ISSUE IS THAT IMAGES ARE DISTRIBUTED ON TWO GPUS, BUT TEXT IS NOT
+LEARNING_RATE = 1e-5 # 1e-3 gets stuck
 
-logging.basicConfig(level=logging.DEBUG) # DEBUG, INFO, WARNING, ERROR, CRITICAL
+logging.basicConfig(level=logging.INFO) # DEBUG, INFO, WARNING, ERROR, CRITICAL
 
 print("CUDA available:", torch.cuda.is_available())
 
 class MultimodalDataset(Dataset):
 
-    def __init__(self, data_path, image_transform, num_classes=2, images_dir=IMAGES_DIR):
+    def __init__(self, data_path, text_embedder, image_transform, num_classes=2, images_dir=IMAGES_DIR):
         df = pd.read_csv(data_path, sep='\t', header=0)
         df = self._preprocess_df(df)
         print(df.columns)
@@ -47,6 +50,7 @@ class MultimodalDataset(Dataset):
         elif num_classes == 6:
             self.label = "6_way_label"
 
+        self.text_embedder = text_embedder
         self.image_transform = image_transform
 
         return
@@ -55,7 +59,7 @@ class MultimodalDataset(Dataset):
         return len(self.data_frame.index)
 
     def __getitem__(self, idx):
-        """ Currently returning text string and image RGB Tensor """
+        """ Currently returning text embedding Tensor and image RGB Tensor """
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
@@ -65,6 +69,7 @@ class MultimodalDataset(Dataset):
         image = self.image_transform(image)
 
         text = self.data_frame.loc[idx, 'clean_title']
+        text = self.text_embedder.encode(text, convert_to_tensor=True)
 
         label = torch.Tensor(
             [self.data_frame.loc[idx, self.label]]
@@ -114,10 +119,11 @@ class JointVisualTextualModel(nn.Module):
     def forward(self, text, image, label):
         text_features = torch.nn.functional.relu(self.text_module(text))
         image_features = torch.nn.functional.relu(self.image_module(image))
+        # print(text_features.size(), image_features.size()) # torch.Size([32, 300]) torch.Size([16, 300])
         combined = torch.cat([text_features, image_features], dim=1)
         fused = torch.nn.functional.relu(self.fusion(combined)) # TODO add dropout
         logits = self.fc(fused)
-        pred = torch.nn.functional.softmax(logits)
+        pred = torch.nn.functional.softmax(logits, dim=1)
         loss = self.loss_fn(pred, label)
         return (pred, loss)
 
@@ -127,7 +133,11 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
         super(MultimodalFakeNewsDetectionModel, self).__init__()
         self.hparams.update(hparams) # https://github.com/PyTorchLightning/pytorch-lightning/discussions/7525
 
-        self.embedding_dim = self.hparams.get("embedding_dim", 300)
+        # if "text_embedder" not in self.hparams:
+        #     raise Exception("Must specify a text_embedder in hparams for MultimodalFakeNewsDetectionModel")
+        # self.text_embedder = self.hparams["text_embedder"]
+
+        self.embedding_dim = self.hparams.get("embedding_dim", 768)
         self.text_feature_dim = self.hparams.get("text_feature_dim", 300)
         self.image_feature_dim = self.hparams.get("image_feature_dim", self.text_feature_dim)
 
@@ -135,22 +145,37 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
 
     # Required for pl.LightningModule
     def forward(self, text, image, label):
+        # pl.Lightning convention: forward() defines prediction for inference
         return self.model(text, image, label)
 
+    # Required for pl.LightningModule
     def training_step(self, batch, batch_idx):
-        print(batch["text"])
-        print(batch["image"])
-        print(batch["label"])
+        # pl.Lightning convention: training_step() defines prediction and
+        # accompanying loss for training, independent of forward()
+        text, image, label = batch["text"], batch["image"], batch["label"]
+        print(image.size())
+        # print(text, image, label)
 
         # TODO Get text embeddings before passing to model
+        # TRY using sentence-transformers
+        # embeddings = self.text_embedder.encode(text, convert_to_tensor=True)
+        # print(type(embeddings))
+        # print(embeddings.size())
+        # print(embeddings)
 
         # TODO Pass to model
+        # pred, loss = self.model(embeddings, image, label)
+        pred, loss = self.model(text, image, label)
+        self.log("train_loss", loss)
+        print(loss.item())
+        return loss
 
     def test_step(self, batch, batch_idx):
         pass
 
+    # Required for pl.LightningModule
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        optimizer = torch.optim.Adam(self.parameters(), lr=LEARNING_RATE)
         return optimizer
 
     def _build_model(self):
@@ -193,16 +218,20 @@ if __name__ == "__main__":
     train_data_path = os.path.join(DATA_PATH, "multimodal_train_100.tsv")
 
     print("Using data:", train_data_path)
+    text_embedder = SentenceTransformer('all-mpnet-base-v2')
     image_transform = _build_image_transform()
     train_dataset = MultimodalDataset(
-        train_data_path, image_transform, images_dir=IMAGES_DIR)
+        train_data_path, text_embedder, image_transform, images_dir=IMAGES_DIR)
     print(len(train_dataset))
     # print(train_dataset[0])
 
-    train_loader = DataLoader(train_dataset, batch_size=32)
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE)
     print(train_loader)
 
-    hparams = {}
+    hparams = {
+        # "text_embedder": text_embedder,
+        "embedding_dim": SENTENCE_TRANSFORMER_EMBEDDING_DIM,
+    }
     model = MultimodalFakeNewsDetectionModel(hparams)
 
     trainer = None
