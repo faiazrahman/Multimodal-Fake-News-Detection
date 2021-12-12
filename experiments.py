@@ -17,6 +17,7 @@ import torchvision
 # from torchvision import transforms
 
 import pytorch_lightning as pl
+from pytorch_lightning.callbacks import Callback
 # from pytorch_lightning.logging import TensorBoardLogger
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
@@ -29,6 +30,8 @@ RESNET_OUT_DIM = 2048
 SENTENCE_TRANSFORMER_EMBEDDING_DIM = 768
 BATCH_SIZE = 32 # ISSUE IS THAT IMAGES ARE DISTRIBUTED ON TWO GPUS, BUT TEXT IS NOT
 LEARNING_RATE = 1e-5 # 1e-3 gets stuck
+
+losses = []
 
 logging.basicConfig(level=logging.INFO) # DEBUG, INFO, WARNING, ERROR, CRITICAL
 
@@ -59,7 +62,12 @@ class MultimodalDataset(Dataset):
         return len(self.data_frame.index)
 
     def __getitem__(self, idx):
-        """ Currently returning text embedding Tensor and image RGB Tensor """
+        """
+        Currently returning text embedding Tensor and image RGB Tensor
+        For data parallel training, the embedding step must happen in the
+        torch.utils.data.Dataset __getitem__() method; otherwise, any data that
+        is not embedded will not be distributed across the multiple GPUs
+        """
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
@@ -150,6 +158,7 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
 
     # Required for pl.LightningModule
     def training_step(self, batch, batch_idx):
+        global losses
         # pl.Lightning convention: training_step() defines prediction and
         # accompanying loss for training, independent of forward()
         text, image, label = batch["text"], batch["image"], batch["label"]
@@ -166,8 +175,9 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
         # TODO Pass to model
         # pred, loss = self.model(embeddings, image, label)
         pred, loss = self.model(text, image, label)
-        self.log("train_loss", loss)
+        self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         print(loss.item())
+        losses.append(loss.item())
         return loss
 
     def test_step(self, batch, batch_idx):
@@ -196,6 +206,16 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
             image_feature_dim=self.image_feature_dim,
             fusion_output_size=self.hparams.get("fusion_output_size", 512)
         )
+
+class PrintCallback(Callback):
+    def on_train_start(self, trainer, pl_module):
+        print("Training started...")
+
+    def on_train_end(self, trainer, pl_module):
+        print("Training done...")
+        global losses
+        for loss_val in losses:
+            print(loss_val)
 
 def _build_text_transform():
     pass
@@ -237,7 +257,11 @@ if __name__ == "__main__":
     trainer = None
     if torch.cuda.is_available():
         # Use all available GPUs with data parallel strategy
-        trainer = pl.Trainer(gpus=list(range(torch.cuda.device_count())), strategy='dp')
+        callbacks = [PrintCallback()]
+        trainer = pl.Trainer(
+            gpus=list(range(torch.cuda.device_count())),
+            strategy='dp',
+            callbacks=callbacks)
     else:
         trainer = pl.Trainer()
     logging.debug(trainer)
