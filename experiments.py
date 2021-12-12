@@ -25,6 +25,7 @@ from sentence_transformers import SentenceTransformer
 DATA_PATH = "./data"
 IMAGES_DIR = os.path.join(DATA_PATH, "images")
 IMAGE_EXTENSION = ".jpg"
+RESNET_OUT_DIM = 2048
 
 logging.basicConfig(level=logging.DEBUG) # DEBUG, INFO, WARNING, ERROR, CRITICAL
 
@@ -54,6 +55,7 @@ class MultimodalDataset(Dataset):
         return len(self.data_frame.index)
 
     def __getitem__(self, idx):
+        """ Currently returning text string and image RGB Tensor """
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
@@ -89,6 +91,72 @@ class MultimodalDataset(Dataset):
         df.reset_index(drop=True, inplace=True)
         return df
 
+class JointVisualTextualModel(nn.Module):
+
+    def __init__(
+            self,
+            num_classes,
+            text_module,
+            image_module,
+            text_feature_dim,
+            image_feature_dim,
+            fusion_output_size
+        ):
+        super(JointVisualTextualModel, self).__init__()
+        pass
+
+    def forward(self, text, image, label):
+        pass
+
+class MultimodalFakeNewsDetectionModel(pl.LightningModule):
+
+    def __init__(self, hparams):
+        super(MultimodalFakeNewsDetectionModel, self).__init__()
+        self.hparams.update(hparams) # https://github.com/PyTorchLightning/pytorch-lightning/discussions/7525
+
+        self.embedding_dim = self.hparams.get("embedding_dim", 300)
+        self.text_feature_dim = self.hparams.get("text_feature_dim", 300)
+        self.image_feature_dim = self.hparams.get("image_feature_dim", self.text_feature_dim)
+
+        self.model = self._build_model()
+
+    # Required for pl.LightningModule
+    def forward(self, text, image, label):
+        return self.model(text, image, label)
+
+    def training_step(self, batch, batch_idx):
+        print(batch["text"])
+        print(batch["image"])
+        print(batch["label"])
+
+        # TODO Get text embeddings before passing to model
+
+    def test_step(self, batch, batch_idx):
+        pass
+
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=1e-3)
+        return optimizer
+
+    def _build_model(self):
+        text_module = torch.nn.Linear(
+            in_features=self.embedding_dim, out_features=self.text_feature_dim)
+
+        image_module = torchvision.models.resnet152(pretrained=True)
+        # Overwrite last layer to get features (rather than classification)
+        image_module.fc = torch.nn.Linear(
+            in_features=RESNET_OUT_DIM, out_features=self.image_feature_dim)
+
+        return JointVisualTextualModel(
+            num_classes=self.hparams.get("num_classes", 2),
+            text_module=text_module,
+            image_module=image_module,
+            text_feature_dim=self.text_feature_dim,
+            image_feature_dim=self.image_feature_dim,
+            fusion_output_size=self.hparams.get("fusion_output_size", 512)
+        )
+
+
 def _build_text_transform():
     pass
 
@@ -115,4 +183,8 @@ if __name__ == "__main__":
         train_data_path, image_transform, images_dir=IMAGES_DIR)
 
     print(len(train_dataset))
-    print(train_dataset[0])
+    # print(train_dataset[0])
+
+    hparams = {}
+    model = MultimodalFakeNewsDetectionModel(hparams)
+    model.fit()
