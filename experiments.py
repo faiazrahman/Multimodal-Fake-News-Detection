@@ -20,6 +20,8 @@ import pytorch_lightning as pl
 # from pytorch_lightning.logging import TensorBoardLogger
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
+from sentence_transformers import SentenceTransformer
+
 DATA_PATH = "./data"
 IMAGES_DIR = os.path.join(DATA_PATH, "images")
 IMAGE_EXTENSION = ".jpg"
