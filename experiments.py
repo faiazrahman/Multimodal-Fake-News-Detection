@@ -96,6 +96,7 @@ class JointVisualTextualModel(nn.Module):
     def __init__(
             self,
             num_classes,
+            loss_fn,
             text_module,
             image_module,
             text_feature_dim,
@@ -103,10 +104,22 @@ class JointVisualTextualModel(nn.Module):
             fusion_output_size
         ):
         super(JointVisualTextualModel, self).__init__()
-        pass
+        self.text_module = text_module
+        self.image_module = image_module
+        self.fusion = torch.nn.Linear(in_features=(text_feature_dim + image_feature_dim),
+            out_features=fusion_output_size)
+        self.fc = torch.nn.Linear(in_features=fusion_output_size, out_features=num_classes)
+        self.loss_fn = loss_fn
 
     def forward(self, text, image, label):
-        pass
+        text_features = torch.nn.functional.relu(self.text_module(text))
+        image_features = torch.nn.functional.relu(self.image_module(image))
+        combined = torch.cat([text_features, image_features], dim=1)
+        fused = torch.nn.functional.relu(self.fusion(combined)) # TODO add dropout
+        logits = self.fc(fused)
+        pred = torch.nn.functional.softmax(logits)
+        loss = self.loss_fn(pred, label)
+        return (pred, loss)
 
 class MultimodalFakeNewsDetectionModel(pl.LightningModule):
 
@@ -131,6 +144,8 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
 
         # TODO Get text embeddings before passing to model
 
+        # TODO Pass to model
+
     def test_step(self, batch, batch_idx):
         pass
 
@@ -149,13 +164,13 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
 
         return JointVisualTextualModel(
             num_classes=self.hparams.get("num_classes", 2),
+            loss_fn=torch.nn.CrossEntropyLoss(),
             text_module=text_module,
             image_module=image_module,
             text_feature_dim=self.text_feature_dim,
             image_feature_dim=self.image_feature_dim,
             fusion_output_size=self.hparams.get("fusion_output_size", 512)
         )
-
 
 def _build_text_transform():
     pass
@@ -181,10 +196,21 @@ if __name__ == "__main__":
     image_transform = _build_image_transform()
     train_dataset = MultimodalDataset(
         train_data_path, image_transform, images_dir=IMAGES_DIR)
-
     print(len(train_dataset))
     # print(train_dataset[0])
 
+    train_loader = DataLoader(train_dataset, batch_size=32)
+    print(train_loader)
+
     hparams = {}
     model = MultimodalFakeNewsDetectionModel(hparams)
-    model.fit()
+
+    trainer = None
+    if torch.cuda.is_available():
+        # Use all available GPUs with data parallel strategy
+        trainer = pl.Trainer(gpus=list(range(torch.cuda.device_count())), strategy='dp')
+    else:
+        trainer = pl.Trainer()
+    logging.debug(trainer)
+
+    trainer.fit(model, train_loader)
