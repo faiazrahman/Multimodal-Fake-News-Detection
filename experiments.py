@@ -26,14 +26,19 @@ from sentence_transformers import SentenceTransformer
 NUM_CPUS = 0 # 24 on Yale Tangra server; Set to 0 and comment out next line if multiprocessing gives errors
 # torch.multiprocessing.set_start_method('spawn')
 
-NUM_CLASSES = 2
+# Configs
+# NUM_CLASSES=2, BATCH_SIZE=32
+# NUM_CLASSES=6, BATCH_SIZE=32
+NUM_CLASSES = 6
+BATCH_SIZE = 32
+
 DATA_PATH = "./data"
 IMAGES_DIR = os.path.join(DATA_PATH, "images")
 IMAGE_EXTENSION = ".jpg"
 RESNET_OUT_DIM = 2048
 SENTENCE_TRANSFORMER_EMBEDDING_DIM = 768
-BATCH_SIZE = 32 # ISSUE IS THAT IMAGES ARE DISTRIBUTED ON TWO GPUS, BUT TEXT IS NOT
-LEARNING_RATE = 1e-5 # 1e-3
+
+LEARNING_RATE = 1e-4 # 1e-3 1e-5
 
 losses = []
 
@@ -198,10 +203,11 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
         """
         Aggregates results when training using a strategy that splits data
         from each batch across GPUs (e.g. data parallel)
+
+        Note that training_step returns a loss, thus batch_parts returns a list
+        of 2 loss values (since there are 2 GPUs being used)
         """
-        predictions = batch_parts["pred"]
-        losses = batch_parts["loss"]
-        return sum(losses) / len(losses)
+        return sum(batch_parts) / len(batch_parts)
 
     def test_step(self, batch, batch_idx):
         text, image, label = batch["text"], batch["image"], batch["label"]
@@ -321,7 +327,8 @@ if __name__ == "__main__":
         trainer = pl.Trainer()
     logging.debug(trainer)
 
-    # trainer.fit(model, train_loader)
-    trainer.test(model, dataloaders=test_loader)
-    results = model.test_results
-    print(results)
+    trainer.fit(model, train_loader)
+
+    # trainer.test(model, dataloaders=test_loader)
+    # results = model.test_results
+    # print(results)
