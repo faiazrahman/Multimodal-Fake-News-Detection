@@ -102,6 +102,8 @@ class MultimodalDataset(Dataset):
         elif Modality(modality) == Modality.TEXT_IMAGE_DIALOGUE:
             self.summarizer = transformers.pipeline("summarization")
 
+        # TODO CALL PREPROCESS_DIALOGUE()
+
         return
 
     def __len__(self):
@@ -412,16 +414,19 @@ class JointTextImageDialogueModel(nn.Module):
             loss_fn,
             text_module,
             image_module,
+            dialogue_module,
             text_feature_dim,
             image_feature_dim,
+            dialogue_feature_dim,
             fusion_output_size,
             dropout_p,
             hidden_size=512,
         ):
-        super(JointVisualTextualModel, self).__init__()
+        super(JointTextImageDialogueModel, self).__init__()
         self.text_module = text_module
         self.image_module = image_module
-        self.fusion = torch.nn.Linear(in_features=(text_feature_dim + image_feature_dim),
+        self.dialogue_module = dialogue_module
+        self.fusion = torch.nn.Linear(in_features=(text_feature_dim + image_feature_dim + dialogue_feature_dim),
             out_features=fusion_output_size)
         # self.fc = torch.nn.Linear(in_features=fusion_output_size, out_features=num_classes)
         self.fc1 = torch.nn.Linear(in_features=fusion_output_size, out_features=hidden_size) # trial
@@ -429,13 +434,14 @@ class JointTextImageDialogueModel(nn.Module):
         self.loss_fn = loss_fn
         self.dropout = torch.nn.Dropout(dropout_p)
 
-    def forward(self, text, image, label):
+    def forward(self, text, image, dialogue, label):
         text_features = torch.nn.functional.relu(self.text_module(text))
         image_features = torch.nn.functional.relu(self.image_module(image))
+        dialogue_features = torch.nn.functional.relu(self.dialogue_module(dialogue))
         # print(text_features.size(), image_features.size()) # torch.Size([32, 300]) torch.Size([16, 300])
-        combined = torch.cat([text_features, image_features], dim=1)
+        combined = torch.cat([text_features, image_features, dialogue_features], dim=1)
         fused = self.dropout(
-            torch.nn.functional.relu(self.fusion(combined))) # TODO add dropout
+            torch.nn.functional.relu(self.fusion(combined)))
         # logits = self.fc(fused)
         hidden = torch.nn.functional.relu(self.fc1(fused)) # trial
         logits = self.fc2(hidden) # trial
@@ -447,31 +453,32 @@ class JointTextImageDialogueModel(nn.Module):
 class MultimodalFakeNewsDetectionModelWithDialogue(pl.LightningModule):
 
     def __init__(self, hparams=None):
-        super(MultimodalFakeNewsDetectionModel, self).__init__()
+        super(MultimodalFakeNewsDetectionModelWithDialogue, self).__init__()
         if hparams:
             self.hparams.update(hparams) # https://github.com/PyTorchLightning/pytorch-lightning/discussions/7525
 
         self.embedding_dim = self.hparams.get("embedding_dim", 768)
         self.text_feature_dim = self.hparams.get("text_feature_dim", 300)
         self.image_feature_dim = self.hparams.get("image_feature_dim", self.text_feature_dim)
+        self.dialogue_feature_dim = self.hparams.get("dialogue_feature_dim", self.text_feature_dim)
 
         self.model = self._build_model()
 
     # Required for pl.LightningModule
-    def forward(self, text, image, label):
+    def forward(self, text, image, dialogue, label):
         # pl.Lightning convention: forward() defines prediction for inference
-        return self.model(text, image, label)
+        return self.model(text, image, dialogue,  label)
 
     # Required for pl.LightningModule
     def training_step(self, batch, batch_idx):
         global losses
         # pl.Lightning convention: training_step() defines prediction and
         # accompanying loss for training, independent of forward()
-        text, image, label = batch["text"], batch["image"], batch["label"]
+        text, image, dialogue, label = batch["text"], batch["image"], batch["dialogue"], batch["label"]
         # print(image.size())
         # print(text, image, label)
 
-        pred, loss = self.model(text, image, label)
+        pred, loss = self.model(text, image, dialogue, label)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
         print(loss.item())
         losses.append(loss.item())
@@ -488,8 +495,8 @@ class MultimodalFakeNewsDetectionModelWithDialogue(pl.LightningModule):
         return sum(batch_parts) / len(batch_parts)
 
     def test_step(self, batch, batch_idx):
-        text, image, label = batch["text"], batch["image"], batch["label"]
-        pred, loss = self.model(text, image, label)
+        text, image, dialogue, label = batch["text"], batch["image"], batch["dialogue"], batch["label"]
+        pred, loss = self.model(text, image, dialogue, label)
         pred_label = torch.argmax(pred, dim=1)
         accuracy = torch.sum(pred_label == label).item() / (len(label) * 1.0)
         output = {
@@ -529,13 +536,18 @@ class MultimodalFakeNewsDetectionModelWithDialogue(pl.LightningModule):
         image_module.fc = torch.nn.Linear(
             in_features=RESNET_OUT_DIM, out_features=self.image_feature_dim)
 
+        dialogue_module = torch.nn.Linear(
+            in_features=self.embedding_dim, out_features=self.dialogue_feature_dim)
+
         return JointTextImageDialogueModel(
             num_classes=self.hparams.get("num_classes", NUM_CLASSES),
             loss_fn=torch.nn.CrossEntropyLoss(),
             text_module=text_module,
             image_module=image_module,
+            dialogue_module=dialogue_module,
             text_feature_dim=self.text_feature_dim,
             image_feature_dim=self.image_feature_dim,
+            dialogue_feature_dim=self.dialogue_feature_dim,
             fusion_output_size=self.hparams.get("fusion_output_size", 512),
             dropout_p=self.hparams.get("dropout_p", DROPOUT_P)
         )
@@ -597,14 +609,41 @@ if __name__ == "__main__":
     )
     print("train:", len(train_dataset))
     print("test: ", len(test_dataset))
-    print(train_dataset[0])
+    # print(train_dataset[0])
 
-    ### DIALOGUE DATA
+    ### DIALOGUE DATA PREPROCESSING
     # df = train_dataset.data_frame
     # print(df.columns)
     # print(df['id'])
     # # train_dataset._preprocess_dialogue()
     # train_dataset._preprocess_dialogue(from_saved_df_path="./data/comment_dataframe.pkl")
+    ###
+
+    ### DIALOGUE DATASET
+    # dialogue_train_dataset = MultimodalDataset(
+    #     data_path=train_data_path,
+    #     modality="text-image-dialogue",
+    #     text_embedder=text_embedder,
+    #     image_transform=image_transform,
+    #     images_dir=IMAGES_DIR,
+    #     num_classes=NUM_CLASSES
+    # )
+    # dialogue_test_dataset = MultimodalDataset(
+    #     data_path=test_data_path,
+    #     modality="text-image-dialogue",
+    #     text_embedder=text_embedder,
+    #     image_transform=image_transform,
+    #     images_dir=IMAGES_DIR,
+    #     num_classes=NUM_CLASSES
+    # )
+
+    # hparams = {
+    #     "embedding_dim": SENTENCE_TRANSFORMER_EMBEDDING_DIM,
+    #     "num_classes": NUM_CLASSES
+    # }
+    # model = MultimodalFakeNewsDetectionModelWithDialogue(hparams)
+    # print(model)
+    # # assert(1 == 2)
     ###
 
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, num_workers=NUM_CPUS)
