@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import logging
 import argparse
+import enum
 
 import pandas as pd
 import numpy as np
@@ -32,10 +33,11 @@ NUM_CPUS = 0 # 24 on Yale Tangra server; Set to 0 and comment out next line if m
 # Configs
 # NUM_CLASSES=2, BATCH_SIZE=32, LEARNING_RATE=1e-5
 # NUM_CLASSES=6, BATCH_SIZE=32, LEARNING_RATE=1e-3 1e-4
-NUM_CLASSES = 6
+NUM_CLASSES = 3
 BATCH_SIZE = 32
 LEARNING_RATE = 1e-4 # 1e-3 1e-4 1e-5
 DROPOUT_P = 0.1
+MODALITY = "text-image"
 
 DATA_PATH = "./data"
 PL_ASSETS_PATH = "./lightning_logs"
@@ -50,13 +52,25 @@ logging.basicConfig(level=logging.INFO) # DEBUG, INFO, WARNING, ERROR, CRITICAL
 
 print("CUDA available:", torch.cuda.is_available())
 
+class Modality(enum.Enum):
+    """
+    Note on Comparisons: Either use `string_value == enum.value`
+    or `Modality(string_value) == enum`
+    """
+    TEXT = "text"
+    IMAGE = "image"
+    TEXT_IMAGE = "text-image"
+    TEXT_IMAGE_DIALOGUE = "text-image-dialogue"
+
 class MultimodalDataset(Dataset):
 
     def __init__(
         self,
-        data_path,
-        text_embedder,
-        image_transform,
+        data_path=None,
+        modality=None,
+        text_embedder=None,
+        image_transform=None,
+        summarization_model=None,
         num_classes=2,
         images_dir=IMAGES_DIR
     ):
@@ -66,7 +80,9 @@ class MultimodalDataset(Dataset):
         print(df['clean_title'])
         self.data_frame = df
         logging.debug(self.data_frame)
+        self.text_ids = set(self.data_frame['id'])
 
+        self.modality = modality
         self.label = "2_way_label"
         if num_classes == 3:
             self.label = "3_way_label"
@@ -75,11 +91,16 @@ class MultimodalDataset(Dataset):
 
         self.text_embedder = text_embedder
         self.image_transform = image_transform
+        self.summarization_model = summarization_model
 
         # FIXME initialize this only in the preprocess_dialogue method so it's not bulky?
-        self.summarizer = transformers.pipeline("summarization")
-        # Specify model="bart-large-cnn", "t5-small", "t5-base", "t5-large", "t5-3b", "t5-11b"
-        # https://huggingface.co/docs/transformers/master/en/main_classes/pipelines#transformers.SummarizationPipeline
+        self.summarizer = None
+        if Modality(modality) == Modality.TEXT_IMAGE_DIALOGUE and summarization_model:
+            # Model options: "bart-large-cnn", "t5-small", "t5-base", "t5-large", "t5-3b", "t5-11b"
+            # https://huggingface.co/docs/transformers/master/en/main_classes/pipelines#transformers.SummarizationPipeline
+            self.summarizer = transformers.pipeline("summarization", model=summarization_model)
+        elif Modality(modality) == Modality.TEXT_IMAGE_DIALOGUE:
+            self.summarizer = transformers.pipeline("summarization")
 
         return
 
@@ -96,13 +117,8 @@ class MultimodalDataset(Dataset):
         if torch.is_tensor(idx):
             idx = idx.tolist()
 
+        text, image, dialogue = None, None, None
         item_id = self.data_frame.loc[idx, 'id']
-        image_path = os.path.join(IMAGES_DIR, item_id + IMAGE_EXTENSION)
-        image = Image.open(image_path).convert("RGB")
-        image = self.image_transform(image)
-
-        text = self.data_frame.loc[idx, 'clean_title']
-        text = self.text_embedder.encode(text, convert_to_tensor=True)
 
         label = torch.Tensor(
             [self.data_frame.loc[idx, self.label]]
@@ -110,10 +126,37 @@ class MultimodalDataset(Dataset):
 
         item = {
             "id": item_id,
-            "text": text,
-            "image": image,
             "label": label
         }
+
+        # image_path = os.path.join(IMAGES_DIR, item_id + IMAGE_EXTENSION)
+        # image = Image.open(image_path).convert("RGB")
+        # image = self.image_transform(image)
+
+        # text = self.data_frame.loc[idx, 'clean_title']
+        # text = self.text_embedder.encode(text, convert_to_tensor=True)
+
+        if Modality(self.modality) in [Modality.TEXT, Modality.TEXT_IMAGE, Modality.TEXT_IMAGE_DIALOGUE]:
+            text = self.data_frame.loc[idx, 'clean_title']
+            text = self.text_embedder.encode(text, convert_to_tensor=True)
+            item["text"] = text
+        if Modality(self.modality) in [Modality.IMAGE, Modality.TEXT_IMAGE, Modality.TEXT_IMAGE_DIALOGUE]:
+            image_path = os.path.join(IMAGES_DIR, item_id + IMAGE_EXTENSION)
+            image = Image.open(image_path).convert("RGB")
+            image = self.image_transform(image)
+            item["image"] = image
+        if Modality(self.modality) == Modality.TEXT_IMAGE_DIALOGUE:
+            dialogue = self.data_frame.loc[idx, 'comment_summary']
+            dialogue = self.text_embedder.encode(dialogue, convert_to_tensor=True)
+            item["dialogue"] = dialogue
+
+        # item = {
+        #     "id": item_id,
+        #     "text": text,
+        #     "image": image,
+        #     "dialogue": dialogue,
+        #     "label": label
+        # }
 
         return item
 
@@ -144,48 +187,56 @@ class MultimodalDataset(Dataset):
         and 'body' contains the comment text and 'ups' contains upvotes """
 
         def generate_summaries_and_save_df():
-            # TODO Group comments by post id
-            text_ids = set(self.data_frame['id'])
+            # Group comments by post id
+            # text_ids = set(self.data_frame['id'])
             count = 0
 
+            # Add new column in main dataframe to hold dialogue summaries
             self.data_frame['comment_summary'] = ""
 
-            for iteration, text_id in enumerate(text_ids):
+            failed_ids = []
+            for iteration, text_id in enumerate(self.text_ids):
                 if (iteration % 250 == 0):
                     print("Generating summaries for item {}...".format(iteration))
+                    # Save progress so far
+                    self.data_frame.to_pickle("./data/text_image_dialogue_dataframe.pkl")
 
-                all_comments = df[df['submission_id'] == text_id]
-                all_comments.sort_values(by=['ups'], ascending=False)
-                # print("\n\ngetting all comments...")
-                # print(all_comments)
-                # print(all_comments['body'])
-                all_comments = list(all_comments['body'])
-                # print(all_comments)
+                try:
+                    all_comments = df[df['submission_id'] == text_id]
+                    all_comments.sort_values(by=['ups'], ascending=False)
+                    # print("\n\ngetting all comments...")
+                    # print(all_comments)
+                    # print(all_comments['body'])
+                    all_comments = list(all_comments['body'])
+                    # print(all_comments)
 
-                # TODO Generate summary of comments via Transformers
-                corpus = "\n".join(all_comments)
-                # TODO if there are no comments, set the summary to "none" or some other null phrase
-                # TODO try except and reduce length in except (to avoid IndexError)
-                summary = "none"
-                if len(all_comments) > 0:
-                    # TODO manually set max length as half of the number of total words in the comments
-                    # and then min length will be min of max length and 5
-                    # Note that num_words is calculated very roughly, splitting on whitespace
-                    num_words = sum([len(comment.split()) for comment in all_comments])
-                    max_length = min(75, num_words // 2) # For short comment threads, it'll be <75
-                    max_length = max(max_length, 5) # Avoid 1-length maxes, which leads to unexpected behavior
-                    min_length = min(5, max_length - 1)
-                    summary = self.summarizer(corpus, min_length=min_length, max_length=max_length, truncation=True)
-                    summary = summary[0]['summary_text'] # pipeline returns a list containing a dict # https://huggingface.co/docs/transformers/master/en/main_classes/pipelines
+                    # Generate summary of comments via Transformers
+                    corpus = "\n".join(all_comments)
+                    # TODO try except and reduce length in except (to avoid IndexError)
+                    summary = "none"
+                    if len(all_comments) > 0:
+                        # TODO manually set max length as half of the number of total words in the comments
+                        # and then min length will be min of max length and 5
+                        # Note that num_words is calculated very roughly, splitting on whitespace
+                        num_words = sum([len(comment.split()) for comment in all_comments])
+                        max_length = min(75, num_words // 2) # For short comment threads, it'll be <75
+                        max_length = max(max_length, 5) # Avoid 1-length maxes, which leads to unexpected behavior
+                        min_length = min(5, max_length - 1)
+                        summary = self.summarizer(corpus, min_length=min_length, max_length=max_length, truncation=True)
+                        summary = summary[0]['summary_text'] # pipeline returns a list containing a dict # https://huggingface.co/docs/transformers/master/en/main_classes/pipelines
 
-                # TODO Add summary to self.data_frame 'comment_summary' column
-                self.data_frame.loc[self.data_frame['id'] == text_id, 'comment_summary'] = summary
+                    # Add summary to self.data_frame 'comment_summary' column
+                    self.data_frame.loc[self.data_frame['id'] == text_id, 'comment_summary'] = summary
+                except:
+                    failed_ids.append(text_id)
+
+            # Dump main df into pkl (and figure out path convention)
+            self.data_frame.to_pickle("./data/text_image_dialogue_dataframe.pkl")
 
             print(self.data_frame)
             print(self.data_frame['comment_summary'])
-
-            # TODO Dump main df into pkl (and figure out path convention)
-            self.data_frame.to_pickle("./data/text_image_dialogue_dataframe.pkl")
+            print("num_failed:", len(failed_ids))
+            print(failed_ids)
 
         if from_saved_df_path != "":
             df = pd.read_pickle(from_saved_df_path)
@@ -194,7 +245,7 @@ class MultimodalDataset(Dataset):
             generate_summaries_and_save_df()
         else:
             df = pd.read_csv("./data/all_comments.tsv", sep='\t')
-            self.text_ids = set(self.data_frame['id'])
+            # self.text_ids = set(self.data_frame['id'])
             # FIXME: this will raise an AttributeError because it's only set in this half of the conditional
 
             def text_exists(row):
@@ -392,22 +443,31 @@ if __name__ == "__main__":
     text_embedder = SentenceTransformer('all-mpnet-base-v2')
     image_transform = _build_image_transform()
     train_dataset = MultimodalDataset(
-        train_data_path, text_embedder, image_transform, images_dir=IMAGES_DIR,
-        num_classes=NUM_CLASSES)
+        data_path=train_data_path,
+        modality=MODALITY,
+        text_embedder=text_embedder,
+        image_transform=image_transform,
+        images_dir=IMAGES_DIR,
+        num_classes=NUM_CLASSES
+    )
     test_dataset = MultimodalDataset(
-        test_data_path, text_embedder, image_transform, images_dir=IMAGES_DIR,
-        num_classes=NUM_CLASSES)
+        data_path=test_data_path,
+        modality=MODALITY,
+        text_embedder=text_embedder,
+        image_transform=image_transform,
+        images_dir=IMAGES_DIR,
+        num_classes=NUM_CLASSES
+    )
     print("train:", len(train_dataset))
     print("test: ", len(test_dataset))
-    # print(train_dataset[0])
+    print(train_dataset[0])
 
     ###
-    df = train_dataset.data_frame
-    print(df.columns)
-    print(df['id'])
-    # train_dataset._preprocess_dialogue()
-    train_dataset._preprocess_dialogue(from_saved_df_path="./data/comment_dataframe.pkl")
-    # print(df['linked_submission_id'])
+    # df = train_dataset.data_frame
+    # print(df.columns)
+    # print(df['id'])
+    # # train_dataset._preprocess_dialogue()
+    # train_dataset._preprocess_dialogue(from_saved_df_path="./data/comment_dataframe.pkl")
     ###
 
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, num_workers=NUM_CPUS)
