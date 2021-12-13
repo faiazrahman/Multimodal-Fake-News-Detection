@@ -2,6 +2,7 @@ import sys
 import os
 from pathlib import Path
 import logging
+import argparse
 
 import pandas as pd
 import numpy as np
@@ -28,13 +29,14 @@ NUM_CPUS = 0 # 24 on Yale Tangra server; Set to 0 and comment out next line if m
 
 # Configs
 # NUM_CLASSES=2, BATCH_SIZE=32, LEARNING_RATE=1e-5
-# NUM_CLASSES=6, BATCH_SIZE=32, LEARNING_RATE=1e-3
+# NUM_CLASSES=6, BATCH_SIZE=32, LEARNING_RATE=1e-3 1e-4
 NUM_CLASSES = 6
 BATCH_SIZE = 32
-LEARNING_RATE = 1e-3 # 1e-3 1e-5
+LEARNING_RATE = 1e-4 # 1e-3 1e-4 1e-5
 DROPOUT_P = 0.1
 
 DATA_PATH = "./data"
+PL_ASSETS_PATH = "./lightning_logs"
 IMAGES_DIR = os.path.join(DATA_PATH, "images")
 IMAGE_EXTENSION = ".jpg"
 RESNET_OUT_DIM = 2048
@@ -135,13 +137,16 @@ class JointVisualTextualModel(nn.Module):
             image_feature_dim,
             fusion_output_size,
             dropout_p,
+            hidden_size=512,
         ):
         super(JointVisualTextualModel, self).__init__()
         self.text_module = text_module
         self.image_module = image_module
         self.fusion = torch.nn.Linear(in_features=(text_feature_dim + image_feature_dim),
             out_features=fusion_output_size)
-        self.fc = torch.nn.Linear(in_features=fusion_output_size, out_features=num_classes)
+        # self.fc = torch.nn.Linear(in_features=fusion_output_size, out_features=num_classes)
+        self.fc1 = torch.nn.Linear(in_features=fusion_output_size, out_features=hidden_size) # trial
+        self.fc2 = torch.nn.Linear(in_features=hidden_size, out_features=num_classes) # trial
         self.loss_fn = loss_fn
         self.dropout = torch.nn.Dropout(dropout_p)
 
@@ -152,16 +157,20 @@ class JointVisualTextualModel(nn.Module):
         combined = torch.cat([text_features, image_features], dim=1)
         fused = self.dropout(
             torch.nn.functional.relu(self.fusion(combined))) # TODO add dropout
-        logits = self.fc(fused)
-        pred = torch.nn.functional.softmax(logits, dim=1)
+        # logits = self.fc(fused)
+        hidden = torch.nn.functional.relu(self.fc1(fused)) # trial
+        logits = self.fc2(hidden) # trial
+        # pred = torch.nn.functional.softmax(logits, dim=1)
+        pred = logits # nn.CrossEntropyLoss expects raw logits as model output # https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html
         loss = self.loss_fn(pred, label)
         return (pred, loss)
 
 class MultimodalFakeNewsDetectionModel(pl.LightningModule):
 
-    def __init__(self, hparams):
+    def __init__(self, hparams=None):
         super(MultimodalFakeNewsDetectionModel, self).__init__()
-        self.hparams.update(hparams) # https://github.com/PyTorchLightning/pytorch-lightning/discussions/7525
+        if hparams:
+            self.hparams.update(hparams) # https://github.com/PyTorchLightning/pytorch-lightning/discussions/7525
 
         self.embedding_dim = self.hparams.get("embedding_dim", 768)
         self.text_feature_dim = self.hparams.get("text_feature_dim", 300)
@@ -241,7 +250,7 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
             in_features=RESNET_OUT_DIM, out_features=self.image_feature_dim)
 
         return JointVisualTextualModel(
-            num_classes=self.hparams.get("num_classes", 2),
+            num_classes=self.hparams.get("num_classes", NUM_CLASSES),
             loss_fn=torch.nn.CrossEntropyLoss(),
             text_module=text_module,
             image_module=image_module,
@@ -278,11 +287,15 @@ def _build_image_transform(image_dim=224):
 
     return image_transform
 
+def get_checkpoint_filename_from_dir(path):
+    return os.listdir(path)[0]
+
 if __name__ == "__main__":
     train_data_path = os.path.join(DATA_PATH, "multimodal_train_10000.tsv")
-    test_data_path = os.path.join(DATA_PATH, "multimodal_test_100.tsv")
+    test_data_path = os.path.join(DATA_PATH, "multimodal_test_1000.tsv")
 
-    print("Using data:", train_data_path)
+    print("Using train data:", train_data_path)
+    print("Using test data:", test_data_path)
     text_embedder = SentenceTransformer('all-mpnet-base-v2')
     image_transform = _build_image_transform()
     train_dataset = MultimodalDataset(
@@ -313,15 +326,26 @@ if __name__ == "__main__":
         trainer = pl.Trainer(
             gpus=list(range(torch.cuda.device_count())),
             strategy='dp',
-            callbacks=callbacks)
+            callbacks=callbacks,
+            # enable_progress_bar=False, # Doesn't fix Batches progress bar issue
+        )
     else:
         trainer = pl.Trainer()
     logging.debug(trainer)
 
     # TRAINING
-    trainer.fit(model, train_loader)
+    # trainer.fit(model, train_loader)
 
     # EVALUATION
-    # trainer.test(model, dataloaders=test_loader)
-    # results = model.test_results
-    # print(results)
+    # # # path_exp6 = os.path.join(PL_ASSETS_PATH, "version_70", "checkpoints", "epoch=15-step=4847.ckpt")
+    assets_version = "version_87"
+    checkpoint_path = os.path.join(PL_ASSETS_PATH, assets_version, "checkpoints")
+    checkpoint_filename = get_checkpoint_filename_from_dir(checkpoint_path)
+    checkpoint_path = os.path.join(checkpoint_path, checkpoint_filename)
+    print(checkpoint_path)
+    model = MultimodalFakeNewsDetectionModel.load_from_checkpoint(checkpoint_path)
+    trainer.test(model, dataloaders=test_loader)
+    results = model.test_results
+    print(test_data_path)
+    print(checkpoint_path)
+    print(results)
