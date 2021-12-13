@@ -50,7 +50,14 @@ print("CUDA available:", torch.cuda.is_available())
 
 class MultimodalDataset(Dataset):
 
-    def __init__(self, data_path, text_embedder, image_transform, num_classes=2, images_dir=IMAGES_DIR):
+    def __init__(
+        self,
+        data_path,
+        text_embedder,
+        image_transform,
+        num_classes=2,
+        images_dir=IMAGES_DIR
+    ):
         df = pd.read_csv(data_path, sep='\t', header=0)
         df = self._preprocess_df(df)
         print(df.columns)

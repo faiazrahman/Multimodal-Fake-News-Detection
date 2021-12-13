@@ -50,7 +50,14 @@ print("CUDA available:", torch.cuda.is_available())
 
 class MultimodalDataset(Dataset):
 
-    def __init__(self, data_path, text_embedder, image_transform, num_classes=2, images_dir=IMAGES_DIR):
+    def __init__(
+        self,
+        data_path,
+        text_embedder,
+        image_transform,
+        num_classes=2,
+        images_dir=IMAGES_DIR
+    ):
         df = pd.read_csv(data_path, sep='\t', header=0)
         df = self._preprocess_df(df)
         print(df.columns)
@@ -124,6 +131,45 @@ class MultimodalDataset(Dataset):
         df = df.drop(['created_utc', 'domain', 'hasImage', 'image_url'], axis=1)
         df.reset_index(drop=True, inplace=True)
         return df
+
+    def _preprocess_dialogue(self, from_saved_df_path=""):
+        """ A comment's 'submission_id' is linked (i.e. equal) to a post's 'id' """
+
+        if from_saved_df_path != "":
+            df = pd.read_pickle(from_saved_df_path)
+            print(df.columns)
+            print(df['body'])
+        else:
+            df = pd.read_csv("./data/all_comments.tsv", sep='\t')
+            self.text_ids = set(self.data_frame['id'])
+
+            def text_exists(row):
+                """ Ensures that a comment's corresponding text exists """
+                if row['submission_id'] in self.text_ids:
+                    return True
+                else:
+                    return False
+
+            def comment_deleted(row):
+                return row['body'] == "[deleted]"
+
+            print(df)
+            df['text_exists'] = df.apply(lambda row: text_exists(row), axis=1)
+            df = df[df['text_exists'] == True].drop('text_exists', axis=1)
+            df['comment_deleted'] = df.apply(lambda row: comment_deleted(row), axis=1)
+            df = df[df['comment_deleted'] == False].drop('comment_deleted', axis=1)
+            df.reset_index(drop=True, inplace=True)
+            print("")
+            print(df)
+            df.to_pickle("./data/comment_dataframe.pkl")
+
+            # TODO Group comments by post id
+
+            # TODO Generate summary of comments via Transformers
+
+            # TODO Add summary to self.data_frame 'comment_summary' column
+
+            # TODO Dump df into pkl (and figure out path convention)
 
 class JointVisualTextualModel(nn.Module):
 
@@ -309,6 +355,15 @@ if __name__ == "__main__":
     print("test: ", len(test_dataset))
     # print(train_dataset[0])
 
+    ###
+    df = train_dataset.data_frame
+    print(df.columns)
+    print(df['id'])
+    # train_dataset._preprocess_dialogue()
+    train_dataset._preprocess_dialogue(from_saved_df_path="./data/comment_dataframe.pkl")
+    # print(df['linked_submission_id'])
+    ###
+
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, num_workers=NUM_CPUS)
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, num_workers=NUM_CPUS)
     print(train_loader)
@@ -339,14 +394,14 @@ if __name__ == "__main__":
 
     # EVALUATION
     # # path_exp6 = os.path.join(PL_ASSETS_PATH, "version_70", "checkpoints", "epoch=15-step=4847.ckpt")
-    assets_version = "version_111"
-    checkpoint_path = os.path.join(PL_ASSETS_PATH, assets_version, "checkpoints")
-    checkpoint_filename = get_checkpoint_filename_from_dir(checkpoint_path)
-    checkpoint_path = os.path.join(checkpoint_path, checkpoint_filename)
-    print(checkpoint_path)
-    model = MultimodalFakeNewsDetectionModel.load_from_checkpoint(checkpoint_path)
-    trainer.test(model, dataloaders=test_loader)
-    results = model.test_results
-    print(test_data_path)
-    print(checkpoint_path)
-    print(results)
+    # assets_version = "version_111"
+    # checkpoint_path = os.path.join(PL_ASSETS_PATH, assets_version, "checkpoints")
+    # checkpoint_filename = get_checkpoint_filename_from_dir(checkpoint_path)
+    # checkpoint_path = os.path.join(checkpoint_path, checkpoint_filename)
+    # print(checkpoint_path)
+    # model = MultimodalFakeNewsDetectionModel.load_from_checkpoint(checkpoint_path)
+    # trainer.test(model, dataloaders=test_loader)
+    # results = model.test_results
+    # print(test_data_path)
+    # print(checkpoint_path)
+    # print(results)
