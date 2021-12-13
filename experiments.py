@@ -238,6 +238,7 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
     # Required for pl.LightningModule
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=LEARNING_RATE)
+        # optimizer = torch.optim.SGD(self.parameters(), lr=LEARNING_RATE, momentum=0.9)
         return optimizer
 
     def _build_model(self):
@@ -337,8 +338,8 @@ if __name__ == "__main__":
     # trainer.fit(model, train_loader)
 
     # EVALUATION
-    # # # path_exp6 = os.path.join(PL_ASSETS_PATH, "version_70", "checkpoints", "epoch=15-step=4847.ckpt")
-    assets_version = "version_87"
+    # # path_exp6 = os.path.join(PL_ASSETS_PATH, "version_70", "checkpoints", "epoch=15-step=4847.ckpt")
+    assets_version = "version_111"
     checkpoint_path = os.path.join(PL_ASSETS_PATH, assets_version, "checkpoints")
     checkpoint_filename = get_checkpoint_filename_from_dir(checkpoint_path)
     checkpoint_path = os.path.join(checkpoint_path, checkpoint_filename)
