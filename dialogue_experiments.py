@@ -24,6 +24,8 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
 from sentence_transformers import SentenceTransformer
 
+import transformers
+
 NUM_CPUS = 0 # 24 on Yale Tangra server; Set to 0 and comment out next line if multiprocessing gives errors
 # torch.multiprocessing.set_start_method('spawn')
 
@@ -73,6 +75,11 @@ class MultimodalDataset(Dataset):
 
         self.text_embedder = text_embedder
         self.image_transform = image_transform
+
+        # FIXME initialize this only in the preprocess_dialogue method so it's not bulky?
+        self.summarizer = transformers.pipeline("summarization")
+        # Specify model="bart-large-cnn", "t5-small", "t5-base", "t5-large", "t5-3b", "t5-11b"
+        # https://huggingface.co/docs/transformers/master/en/main_classes/pipelines#transformers.SummarizationPipeline
 
         return
 
@@ -133,15 +140,62 @@ class MultimodalDataset(Dataset):
         return df
 
     def _preprocess_dialogue(self, from_saved_df_path=""):
-        """ A comment's 'submission_id' is linked (i.e. equal) to a post's 'id' """
+        """ A comment's 'submission_id' is linked (i.e. equal) to a post's 'id'
+        and 'body' contains the comment text and 'ups' contains upvotes """
+
+        def generate_summaries_and_save_df():
+            # TODO Group comments by post id
+            text_ids = set(self.data_frame['id'])
+            count = 0
+
+            self.data_frame['comment_summary'] = ""
+
+            for iteration, text_id in enumerate(text_ids):
+                if (iteration % 250 == 0):
+                    print("Generating summaries for item {}...".format(iteration))
+
+                all_comments = df[df['submission_id'] == text_id]
+                all_comments.sort_values(by=['ups'], ascending=False)
+                # print("\n\ngetting all comments...")
+                # print(all_comments)
+                # print(all_comments['body'])
+                all_comments = list(all_comments['body'])
+                # print(all_comments)
+
+                # TODO Generate summary of comments via Transformers
+                corpus = "\n".join(all_comments)
+                # TODO if there are no comments, set the summary to "none" or some other null phrase
+                # TODO try except and reduce length in except (to avoid IndexError)
+                summary = "none"
+                if len(all_comments) > 0:
+                    # TODO manually set max length as half of the number of total words in the comments
+                    # and then min length will be min of max length and 5
+                    # Note that num_words is calculated very roughly, splitting on whitespace
+                    num_words = sum([len(comment.split()) for comment in all_comments])
+                    max_length = min(75, num_words // 2) # For short comment threads, it'll be <75
+                    max_length = max(max_length, 5) # Avoid 1-length maxes, which leads to unexpected behavior
+                    min_length = min(5, max_length - 1)
+                    summary = self.summarizer(corpus, min_length=min_length, max_length=max_length, truncation=True)
+                    summary = summary[0]['summary_text'] # pipeline returns a list containing a dict # https://huggingface.co/docs/transformers/master/en/main_classes/pipelines
+
+                # TODO Add summary to self.data_frame 'comment_summary' column
+                self.data_frame.loc[self.data_frame['id'] == text_id, 'comment_summary'] = summary
+
+            print(self.data_frame)
+            print(self.data_frame['comment_summary'])
+
+            # TODO Dump main df into pkl (and figure out path convention)
+            self.data_frame.to_pickle("./data/text_image_dialogue_dataframe.pkl")
 
         if from_saved_df_path != "":
             df = pd.read_pickle(from_saved_df_path)
             print(df.columns)
             print(df['body'])
+            generate_summaries_and_save_df()
         else:
             df = pd.read_csv("./data/all_comments.tsv", sep='\t')
             self.text_ids = set(self.data_frame['id'])
+            # FIXME: this will raise an AttributeError because it's only set in this half of the conditional
 
             def text_exists(row):
                 """ Ensures that a comment's corresponding text exists """
@@ -162,14 +216,6 @@ class MultimodalDataset(Dataset):
             print("")
             print(df)
             df.to_pickle("./data/comment_dataframe.pkl")
-
-            # TODO Group comments by post id
-
-            # TODO Generate summary of comments via Transformers
-
-            # TODO Add summary to self.data_frame 'comment_summary' column
-
-            # TODO Dump df into pkl (and figure out path convention)
 
 class JointVisualTextualModel(nn.Module):
 
