@@ -5,7 +5,7 @@ learning_rate: 1.0e-4 # (float) Note that the mantissa must have a decimal point
 num_epochs: 10 # (int)
 dropout_p: 0.1 # (float)
 text_embedder: "all-mpnet-base-v2" # "all-mpnet-base-v2" | "all-distilroberta-v1"
-dialogue_summarization_model: null # None=Transformers.Pipeline default | "bart-large-cnn" | "t5-small" | "t5-base" | "t5-large"
+dialogue_summarization_model: null # None=Transformers.Pipeline default i.e. "sshleifer/distilbart-cnn-12-6" | "bart-large-cnn" | "t5-small" | "t5-base" | "t5-large"
 trained_model_version: 1 # (int)
 trained_model_path: null # (str)
 gpus: [0, 1] # [0] | [1] | [0, 1] Note that it must be a list of ints
