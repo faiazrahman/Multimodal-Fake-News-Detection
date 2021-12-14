@@ -22,7 +22,6 @@ import pytorch_lightning as pl
 
 from sentence_transformers import SentenceTransformer
 
-
 from dataloader import MultimodalDataset, Modality
 from model import JointVisualTextualModel, JointTextImageDialogueModel, MultimodalFakeNewsDetectionModel, MultimodalFakeNewsDetectionModelWithDialogue, PrintCallback
 
