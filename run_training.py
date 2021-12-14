@@ -108,7 +108,7 @@ if __name__ == "__main__":
         # https://pytorch-lightning.readthedocs.io/en/latest/advanced/multi_gpu.html#data-parallel
         callbacks = [PrintCallback()]
         trainer = pl.Trainer(
-            gpus=DEFAULT_GPUS,
+            gpus=args.gpus,
             strategy="dp",
             callbacks=callbacks,
         )
