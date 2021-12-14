@@ -6,7 +6,7 @@ num_epochs: 10
 dropout_p: 0.1
 text_embedder: "all-mpnet-base-v2"
 dialogue_summarization_model: "sshleifer/distilbart-cnn-12-6"
-trained_model_version: "version_87"
+trained_model_version: "version_111"
 trained_model_path: null
 gpus: [0, 1]
 train_data_path: "./data/multimodal_train_10000.tsv"
