@@ -11,4 +11,5 @@ trained_model_path: null # (str)
 gpus: [0, 1] # [0] | [1] | [0, 1] Note that it must be a list of ints
 train_data_path: "./data/multimodal_train_10000.tsv" # (str)
 test_data_path: "./data/multimodal_test_1000.tsv" # (str)
-preprocessed_dataframe_path: "./data/train__text_image_dataframe.pkl" # (str)
+preprocessed_train_dataframe_path: "./data/train__text_image_dataframe.pkl" # (str)
+preprocessed_train_dataframe_path: "./data/test__text_image_dataframe.pkl" # (str)

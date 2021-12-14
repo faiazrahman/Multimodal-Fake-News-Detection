@@ -68,7 +68,8 @@ if __name__ == "__main__":
     args.test_data_path = config.get("test_data_path", os.path.join(DATA_PATH, "multimodal_test_" + str(TEST_DATA_SIZE) + ".tsv"))
     args.trained_model_version = config.get("trained_model_version", None)
     args.trained_model_path = config.get("trained_model_path", None)
-    args.preprocessed_dataframe_path = config.get("preprocessed_dataframe_path", None)
+    args.preprocessed_train_dataframe_path = config.get("preprocessed_train_dataframe_path", None)
+    args.preprocessed_test_dataframe_path = config.get("preprocessed_test_dataframe_path", None)
 
     text_embedder = SentenceTransformer(args.text_embedder)
     image_transform = None
@@ -78,7 +79,7 @@ if __name__ == "__main__":
         image_transform = JointVisualTextualModel.build_image_transform()
 
     test_dataset = MultimodalDataset(
-        from_dialogue_dataframe=args.from_dialogue_dataframe,
+        from_preprocessed_dataframe=args.preprocessed_test_dataframe_path,
         data_path=args.test_data_path,
         modality=args.modality,
         text_embedder=text_embedder,
