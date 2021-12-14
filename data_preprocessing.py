@@ -46,6 +46,12 @@ if __name__ == "__main__":
     logging.info(args)
 
     text_embedder = SentenceTransformer(args.text_embedder)
+    image_transform = None
+    if Modality(args.modality) == Modality.TEXT_IMAGE_DIALOGUE:
+        image_transform = JointTextImageDialogueModel.build_image_transform()
+    else:
+        image_transform = JointVisualTextualModel.build_image_transform()
+
     if args.train:
         # Calling the MultimodalDataset constructor (i.e. __init__) will run
         # the necessary data preprocessing steps and dump the resulting dataframe
@@ -58,7 +64,7 @@ if __name__ == "__main__":
             data_path=args.train_data_path,
             modality=args.modality,
             text_embedder=text_embedder,
-            image_transform=JointVisualTextualModel.build_image_transform(),
+            image_transform=image_transform,
             summarization_model=args.dialogue_summarization_model,
             images_dir=IMAGES_DIR,
             num_classes=args.num_classes
@@ -73,7 +79,7 @@ if __name__ == "__main__":
             data_path=args.train_data_path,
             modality=args.modality,
             text_embedder=text_embedder,
-            image_transform=JointVisualTextualModel.build_image_transform(),
+            image_transform=image_transform,
             summarization_model=args.dialogue_summarization_model,
             images_dir=IMAGES_DIR,
             num_classes=args.num_classes

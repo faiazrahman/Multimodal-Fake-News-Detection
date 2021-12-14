@@ -30,7 +30,7 @@ NUM_CPUS = 0 # 24 on Yale Tangra server; Set to 0 and comment out next line if m
 # Configs
 # NUM_CLASSES=2, BATCH_SIZE=32, LEARNING_RATE=1e-5
 # NUM_CLASSES=6, BATCH_SIZE=32, LEARNING_RATE=1e-3 1e-4
-NUM_CLASSES = 2
+NUM_CLASSES = 3
 BATCH_SIZE = 16 # 32 # Only 16 if training on a single GPU
 LEARNING_RATE = 1e-4 # 1e-3 1e-4 1e-5
 DROPOUT_P = 0.1
@@ -347,7 +347,7 @@ if __name__ == "__main__":
 
     # EVALUATION
     # # path_exp6 = os.path.join(PL_ASSETS_PATH, "version_70", "checkpoints", "epoch=15-step=4847.ckpt")
-    # assets_version = "version_133"
+    # assets_version = "version_135"
     # checkpoint_path = os.path.join(PL_ASSETS_PATH, assets_version, "checkpoints")
     # checkpoint_filename = get_checkpoint_filename_from_dir(checkpoint_path)
     # checkpoint_path = os.path.join(checkpoint_path, checkpoint_filename)
