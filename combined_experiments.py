@@ -30,12 +30,9 @@ import transformers
 NUM_CPUS = 0 # 24 on Yale Tangra server; Set to 0 and comment out next line if multiprocessing gives errors
 # torch.multiprocessing.set_start_method('spawn')
 
-# Configs
-# NUM_CLASSES=2, BATCH_SIZE=32, LEARNING_RATE=1e-5
-# NUM_CLASSES=6, BATCH_SIZE=32, LEARNING_RATE=1e-3 1e-4
 NUM_CLASSES = 2
 BATCH_SIZE = 32
-LEARNING_RATE = 1e-4 # 1e-3 1e-4 1e-5
+LEARNING_RATE = 1e-4
 DROPOUT_P = 0.1
 MODALITY = "text-image"
 
@@ -66,8 +63,10 @@ class MultimodalDataset(Dataset):
 
     def __init__(
         self,
-        from_preprocessed_dataframe=None, # Path to preprocessed dataframe
-        data_path=None, # Path to data (i.e. not using preprocessed dataframe)
+        from_preprocessed_dataframe=None,
+        from_dialogue_dataframe=None,
+        data_path=None, # Path to data (i.e. not using preprocessed dataframe),
+        type="train",
         modality=None,
         text_embedder=None,
         image_transform=None,
@@ -77,19 +76,35 @@ class MultimodalDataset(Dataset):
     ):
         df = None
         if not from_preprocessed_dataframe:
+            # This is the first time this data is being setup, so we run full preprocessing
             df = pd.read_csv(data_path, sep='\t', header=0)
             df = self._preprocess_df(df)
-            print(df.columns)
-            print(df['clean_title'])
+            logging.debug(df.columns)
+            logging.debug(df['clean_title'])
 
-            # TODO: Dialogue preprocessing, if needed
-        else:
-            # TODO handle either a path str or a pd.DataFrame (check via isinstance)
-            df = pd.read_pickle(from_preprocessed_dataframe)
+            # Run dialogue preprocessing, if needed
+            if Modality(modality) == Modality.TEXT_IMAGE_DIALOGUE:
+                # Special Case: Since the dialogue data is huge, we can first preprocess the
+                # dialogue (comments) dataframe to only keep the comments that pertain to
+                # posts in our dataset's data, and save it into a serialized .pkl file;
+                # If we do that, then we'll run our dialogue preprocessing using that
+                # dataframe (which we load from the .pkl file)
+                if from_dialogue_dataframe:
+                    self._preprocess_dialogue(from_saved_df_path=from_dialogue_dataframe)
+                else:
+                    self._preprocess_dialogue()
+        else: # from_preprocessed_dataframe:
+            df = None
+            if isinstance(from_preprocessed_dataframe, pd.DataFrame):
+                df = from_preprocessed_dataframe
+            elif isinstance(from_preprocessed_dataframe, str):
+                df = pd.read_pickle(from_preprocessed_dataframe)
+            else:
+                raise Exception("MultimodalDataset given invalid from_preprocessed_dataframe arg; Must be path (str) to dataframe or pd.DataFrame")
 
         self.data_frame = df
-        logging.debug(self.data_frame)
         self.text_ids = set(self.data_frame['id'])
+        logging.debug(self.data_frame)
 
         self.modality = modality
         self.label = "2_way_label"
@@ -102,7 +117,6 @@ class MultimodalDataset(Dataset):
         self.image_transform = image_transform
         self.summarization_model = summarization_model
 
-        # FIXME initialize this only in the preprocess_dialogue method so it's not bulky?
         self.summarizer = None
         if Modality(modality) == Modality.TEXT_IMAGE_DIALOGUE and summarization_model:
             # Model options: "bart-large-cnn", "t5-small", "t5-base", "t5-large", "t5-3b", "t5-11b"
@@ -110,8 +124,6 @@ class MultimodalDataset(Dataset):
             self.summarizer = transformers.pipeline("summarization", model=summarization_model)
         elif Modality(modality) == Modality.TEXT_IMAGE_DIALOGUE:
             self.summarizer = transformers.pipeline("summarization")
-
-        # TODO CALL PREPROCESS_DIALOGUE()
 
         return
 
@@ -124,6 +136,14 @@ class MultimodalDataset(Dataset):
         For data parallel training, the embedding step must happen in the
         torch.utils.data.Dataset __getitem__() method; otherwise, any data that
         is not embedded will not be distributed across the multiple GPUs
+
+        item = {
+            "id": item_id,
+            "text": text,
+            "image": image,
+            "dialogue": dialogue,
+            "label": label
+        }
         """
         if torch.is_tensor(idx):
             idx = idx.tolist()
@@ -140,13 +160,6 @@ class MultimodalDataset(Dataset):
             "label": label
         }
 
-        # image_path = os.path.join(IMAGES_DIR, item_id + IMAGE_EXTENSION)
-        # image = Image.open(image_path).convert("RGB")
-        # image = self.image_transform(image)
-
-        # text = self.data_frame.loc[idx, 'clean_title']
-        # text = self.text_embedder.encode(text, convert_to_tensor=True)
-
         if Modality(self.modality) in [Modality.TEXT, Modality.TEXT_IMAGE, Modality.TEXT_IMAGE_DIALOGUE]:
             text = self.data_frame.loc[idx, 'clean_title']
             text = self.text_embedder.encode(text, convert_to_tensor=True)
@@ -160,14 +173,6 @@ class MultimodalDataset(Dataset):
             dialogue = self.data_frame.loc[idx, 'comment_summary']
             dialogue = self.text_embedder.encode(dialogue, convert_to_tensor=True)
             item["dialogue"] = dialogue
-
-        # item = {
-        #     "id": item_id,
-        #     "text": text,
-        #     "image": image,
-        #     "dialogue": dialogue,
-        #     "label": label
-        # }
 
         return item
 
@@ -197,11 +202,7 @@ class MultimodalDataset(Dataset):
         """ A comment's 'submission_id' is linked (i.e. equal) to a post's 'id'
         and 'body' contains the comment text and 'ups' contains upvotes """
 
-        def generate_summaries_and_save_df():
-            # Group comments by post id
-            # text_ids = set(self.data_frame['id'])
-            count = 0
-
+        def generate_summaries_and_save_df(df):
             # Add new column in main dataframe to hold dialogue summaries
             self.data_frame['comment_summary'] = ""
 
@@ -210,32 +211,31 @@ class MultimodalDataset(Dataset):
                 if (iteration % 250 == 0):
                     print("Generating summaries for item {}...".format(iteration))
                     # Save progress so far
-                    # self.data_frame.to_pickle("./data/text_image_dialogue_dataframe.pkl") # TODO make this scalable
-                    self.data_frame.to_pickle("./data/test__text_image_dialogue_dataframe.pkl")
+                    # TODO make this scalable
+                    # self.data_frame.to_pickle("./data/text_image_dialogue_dataframe.pkl") # TODO
+                    self.data_frame.to_pickle("./data/test__text_image_dialogue_dataframe.pkl") # TODO
 
                 try:
+                    # Group comments by post id
                     all_comments = df[df['submission_id'] == text_id]
                     all_comments.sort_values(by=['ups'], ascending=False)
-                    # print("\n\ngetting all comments...")
-                    # print(all_comments)
-                    # print(all_comments['body'])
                     all_comments = list(all_comments['body'])
-                    # print(all_comments)
 
-                    # Generate summary of comments via Transformers
+                    # Generate summary of comments via Transformers pipeline
                     corpus = "\n".join(all_comments)
-                    # TODO try except and reduce length in except (to avoid IndexError)
-                    summary = "none"
+                    summary = "none" # Default if no comments for this post
                     if len(all_comments) > 0:
-                        # TODO manually set max length as half of the number of total words in the comments
-                        # and then min length will be min of max length and 5
+                        # We define the summary's max_length as max(min(75, num_words // 2), 5)
                         # Note that num_words is calculated very roughly, splitting on whitespace
                         num_words = sum([len(comment.split()) for comment in all_comments])
                         max_length = min(75, num_words // 2) # For short comment threads, it'll be <75
                         max_length = max(max_length, 5) # Avoid 1-length maxes, which leads to unexpected behavior
                         min_length = min(5, max_length - 1)
                         summary = self.summarizer(corpus, min_length=min_length, max_length=max_length, truncation=True)
-                        summary = summary[0]['summary_text'] # pipeline returns a list containing a dict # https://huggingface.co/docs/transformers/master/en/main_classes/pipelines
+
+                        # Pipeline returns a list containing a dict
+                        # https://huggingface.co/docs/transformers/master/en/main_classes/pipelines
+                        summary = summary[0]['summary_text']
 
                     # Add summary to self.data_frame 'comment_summary' column
                     self.data_frame.loc[self.data_frame['id'] == text_id, 'comment_summary'] = summary
@@ -243,23 +243,22 @@ class MultimodalDataset(Dataset):
                     failed_ids.append(text_id)
 
             # Dump main df into pkl (and figure out path convention)
-            # self.data_frame.to_pickle("./data/text_image_dialogue_dataframe.pkl") # TODO make this scalable
-            self.data_frame.to_pickle("./data/test__text_image_dialogue_dataframe.pkl")
+            # TODO make this scalable
+            # self.data_frame.to_pickle("./data/text_image_dialogue_dataframe.pkl") # TODO
+            self.data_frame.to_pickle("./data/test__text_image_dialogue_dataframe.pkl") # TODO
 
-            print(self.data_frame)
-            print(self.data_frame['comment_summary'])
-            print("num_failed:", len(failed_ids))
-            print(failed_ids)
+            logging.debug(self.data_frame)
+            logging.debug(self.data_frame['comment_summary'])
+            logging.debug("num_failed:", len(failed_ids))
+            logging.debug(failed_ids)
 
         if from_saved_df_path != "":
+            # Special Case (see above comment in __init__)
             df = pd.read_pickle(from_saved_df_path)
-            print(df.columns)
-            print(df['body'])
-            generate_summaries_and_save_df()
+            generate_summaries_and_save_df(df)
         else:
             df = pd.read_csv("./data/all_comments.tsv", sep='\t')
-            # self.text_ids = set(self.data_frame['id'])
-            # FIXME: this will raise an AttributeError because it's only set in this half of the conditional
+            logging.debug(df)
 
             def text_exists(row):
                 """ Ensures that a comment's corresponding text exists """
@@ -269,18 +268,20 @@ class MultimodalDataset(Dataset):
                     return False
 
             def comment_deleted(row):
+                """ If a comment was deleted, its body just contains [deleted] """
                 return row['body'] == "[deleted]"
 
-            print(df)
             df['text_exists'] = df.apply(lambda row: text_exists(row), axis=1)
             df = df[df['text_exists'] == True].drop('text_exists', axis=1)
             df['comment_deleted'] = df.apply(lambda row: comment_deleted(row), axis=1)
             df = df[df['comment_deleted'] == False].drop('comment_deleted', axis=1)
             df.reset_index(drop=True, inplace=True)
-            print("")
-            print(df)
-            # df.to_pickle("./data/comment_dataframe.pkl") # TODO make this scalable
-            df.to_pickle("./data/test__comment_dataframe.pkl")
+            logging.debug(df)
+
+            # TODO make this scalable
+            # df.to_pickle("./data/comment_dataframe.pkl") # TODO
+            df.to_pickle("./data/test__comment_dataframe.pkl") # TODO
+            generate_summaries_and_save_df(df)
 
 class JointVisualTextualModel(nn.Module):
 
@@ -302,24 +303,26 @@ class JointVisualTextualModel(nn.Module):
         self.fusion = torch.nn.Linear(in_features=(text_feature_dim + image_feature_dim),
             out_features=fusion_output_size)
         # self.fc = torch.nn.Linear(in_features=fusion_output_size, out_features=num_classes)
-        self.fc1 = torch.nn.Linear(in_features=fusion_output_size, out_features=hidden_size) # trial
-        self.fc2 = torch.nn.Linear(in_features=hidden_size, out_features=num_classes) # trial
+        self.fc1 = torch.nn.Linear(in_features=fusion_output_size, out_features=hidden_size)
+        self.fc2 = torch.nn.Linear(in_features=hidden_size, out_features=num_classes)
         self.loss_fn = loss_fn
         self.dropout = torch.nn.Dropout(dropout_p)
 
     def forward(self, text, image, label):
         text_features = torch.nn.functional.relu(self.text_module(text))
         image_features = torch.nn.functional.relu(self.image_module(image))
-        # print(text_features.size(), image_features.size()) # torch.Size([32, 300]) torch.Size([16, 300])
         combined = torch.cat([text_features, image_features], dim=1)
         fused = self.dropout(
             torch.nn.functional.relu(self.fusion(combined))) # TODO add dropout
         # logits = self.fc(fused)
-        hidden = torch.nn.functional.relu(self.fc1(fused)) # trial
-        logits = self.fc2(hidden) # trial
-        # pred = torch.nn.functional.softmax(logits, dim=1)
-        pred = logits # nn.CrossEntropyLoss expects raw logits as model output # https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html
+        hidden = torch.nn.functional.relu(self.fc1(fused))
+        logits = self.fc2(hidden)
+
+        # nn.CrossEntropyLoss expects raw logits as model output, NOT torch.nn.functional.softmax(logits, dim=1)
+        # https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html
+        pred = logits
         loss = self.loss_fn(pred, label)
+
         return (pred, loss)
 
 class MultimodalFakeNewsDetectionModel(pl.LightningModule):
@@ -327,7 +330,9 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
     def __init__(self, hparams=None):
         super(MultimodalFakeNewsDetectionModel, self).__init__()
         if hparams:
-            self.hparams.update(hparams) # https://github.com/PyTorchLightning/pytorch-lightning/discussions/7525
+            # Cannot reassign self.hparams in pl.LightningModule; must use update()
+            # https://github.com/PyTorchLightning/pytorch-lightning/discussions/7525
+            self.hparams.update(hparams)
 
         self.embedding_dim = self.hparams.get("embedding_dim", 768)
         self.text_feature_dim = self.hparams.get("text_feature_dim", 300)
@@ -346,8 +351,6 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
         # pl.Lightning convention: training_step() defines prediction and
         # accompanying loss for training, independent of forward()
         text, image, label = batch["text"], batch["image"], batch["label"]
-        # print(image.size())
-        # print(text, image, label)
 
         pred, loss = self.model(text, image, label)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
@@ -355,6 +358,7 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
         losses.append(loss.item())
         return loss
 
+    # Optional for pl.LightningModule
     def training_step_end(self, batch_parts):
         """
         Aggregates results when training using a strategy that splits data
@@ -365,6 +369,7 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
         """
         return sum(batch_parts) / len(batch_parts)
 
+    # Optional for pl.LightningModule
     def test_step(self, batch, batch_idx):
         text, image, label = batch["text"], batch["image"], batch["label"]
         pred, loss = self.model(text, image, label)
@@ -377,6 +382,7 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
         print(loss.item(), output['test_acc'])
         return output
 
+    # Optional for pl.LightningModule
     def test_epoch_end(self, outputs):
         avg_loss = torch.stack([x["test_loss"] for x in outputs]).mean()
         avg_accuracy = torch.stack([x["test_acc"] for x in outputs]).mean()
@@ -384,7 +390,13 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
             'test_loss': avg_loss,
             'test_acc': avg_accuracy
         }
-        self.test_results = logs # https://github.com/PyTorchLightning/pytorch-lightning/issues/1088
+
+        # pl.LightningModule has some issues displaying the results automatically
+        # As a workaround, we can store the result logs as an attribute of the
+        # class instance and display them manually at the end of testing
+        # https://github.com/PyTorchLightning/pytorch-lightning/issues/1088
+        self.test_results = logs
+
         return {
             'avg_test_loss': avg_loss,
             'avg_test_acc': avg_accuracy,
@@ -487,8 +499,6 @@ class MultimodalFakeNewsDetectionModelWithDialogue(pl.LightningModule):
         # pl.Lightning convention: training_step() defines prediction and
         # accompanying loss for training, independent of forward()
         text, image, dialogue, label = batch["text"], batch["image"], batch["dialogue"], batch["label"]
-        # print(image.size())
-        # print(text, image, label)
 
         pred, loss = self.model(text, image, dialogue, label)
         self.log("train_loss", loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
@@ -496,6 +506,7 @@ class MultimodalFakeNewsDetectionModelWithDialogue(pl.LightningModule):
         losses.append(loss.item())
         return loss
 
+    # Optional for pl.LightningModule
     def training_step_end(self, batch_parts):
         """
         Aggregates results when training using a strategy that splits data
@@ -506,6 +517,7 @@ class MultimodalFakeNewsDetectionModelWithDialogue(pl.LightningModule):
         """
         return sum(batch_parts) / len(batch_parts)
 
+    # Optional for pl.LightningModule
     def test_step(self, batch, batch_idx):
         text, image, dialogue, label = batch["text"], batch["image"], batch["dialogue"], batch["label"]
         pred, loss = self.model(text, image, dialogue, label)
@@ -518,6 +530,7 @@ class MultimodalFakeNewsDetectionModelWithDialogue(pl.LightningModule):
         print(loss.item(), output['test_acc'])
         return output
 
+    # Optional for pl.LightningModule
     def test_epoch_end(self, outputs):
         avg_loss = torch.stack([x["test_loss"] for x in outputs]).mean()
         avg_accuracy = torch.stack([x["test_acc"] for x in outputs]).mean()
@@ -525,7 +538,13 @@ class MultimodalFakeNewsDetectionModelWithDialogue(pl.LightningModule):
             'test_loss': avg_loss,
             'test_acc': avg_accuracy
         }
-        self.test_results = logs # https://github.com/PyTorchLightning/pytorch-lightning/issues/1088
+
+        # pl.LightningModule has some issues displaying the results automatically
+        # As a workaround, we can store the result logs as an attribute of the
+        # class instance and display them manually at the end of testing
+        # https://github.com/PyTorchLightning/pytorch-lightning/issues/1088
+        self.test_results = logs
+
         return {
             'avg_test_loss': avg_loss,
             'avg_test_acc': avg_accuracy,
@@ -564,7 +583,6 @@ class MultimodalFakeNewsDetectionModelWithDialogue(pl.LightningModule):
             dropout_p=self.hparams.get("dropout_p", DROPOUT_P)
         )
 
-
 class PrintCallback(Callback):
     def on_train_start(self, trainer, pl_module):
         print("Training started...")
@@ -575,10 +593,8 @@ class PrintCallback(Callback):
         for loss_val in losses:
             print(loss_val)
 
-def _build_text_transform():
-    pass
-
-def _build_image_transform(image_dim=224):
+# TODO: where does this go?
+def build_image_transform(image_dim=224):
     image_transform = torchvision.transforms.Compose([
         torchvision.transforms.Resize(size=(image_dim, image_dim)),
         torchvision.transforms.ToTensor(),
@@ -603,8 +619,7 @@ def test_out_dialogue_data():
     df = pd.read_pickle("./data/text_image_dialogue_dataframe.pkl")
 
     text_embedder = SentenceTransformer('all-mpnet-base-v2')
-    image_transform = _build_image_transform()
-    # NOTE: THIS IS ONLY THE TRAIN DATASET!!!!
+    image_transform = build_image_transform()
     train_dataset = MultimodalDataset(
         from_preprocessed_dataframe="./data/text_image_dialogue_dataframe.pkl",
         modality="text-image-dialogue",
@@ -685,7 +700,7 @@ if __name__ == "__main__":
     print("Using train data:", train_data_path)
     print("Using test data:", test_data_path)
     text_embedder = SentenceTransformer('all-mpnet-base-v2')
-    image_transform = _build_image_transform()
+    image_transform = build_image_transform()
     train_dataset = MultimodalDataset(
         data_path=train_data_path,
         modality=MODALITY,
