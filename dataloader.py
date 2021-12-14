@@ -170,6 +170,7 @@ class MultimodalDataset(Dataset):
         df = df[df['image_exists'] == True].drop('image_exists', axis=1)
         df = df.drop(['created_utc', 'domain', 'hasImage', 'image_url'], axis=1)
         df.reset_index(drop=True, inplace=True)
+        # TODO: dump this df into a pickle with a unique filename
         return df
 
     def _preprocess_dialogue(self, from_saved_df_path=""):

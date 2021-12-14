@@ -30,8 +30,8 @@ NUM_CPUS = 0 # 24 on Yale Tangra server; Set to 0 and comment out next line if m
 # Configs
 # NUM_CLASSES=2, BATCH_SIZE=32, LEARNING_RATE=1e-5
 # NUM_CLASSES=6, BATCH_SIZE=32, LEARNING_RATE=1e-3 1e-4
-NUM_CLASSES = 6
-BATCH_SIZE = 32
+NUM_CLASSES = 2
+BATCH_SIZE = 16 # 32 # Only 16 if training on a single GPU
 LEARNING_RATE = 1e-4 # 1e-3 1e-4 1e-5
 DROPOUT_P = 0.1
 
@@ -304,7 +304,7 @@ if __name__ == "__main__":
 
     print("Using train data:", train_data_path)
     print("Using test data:", test_data_path)
-    text_embedder = SentenceTransformer('all-mpnet-base-v2')
+    text_embedder = SentenceTransformer('all-distilroberta-v1') # 'all-mpnet-base-v2' or 'all-distilroberta-v1'
     image_transform = _build_image_transform()
     train_dataset = MultimodalDataset(
         train_data_path, text_embedder, image_transform, images_dir=IMAGES_DIR,
@@ -332,7 +332,8 @@ if __name__ == "__main__":
         # Use all available GPUs with data parallel strategy
         callbacks = [PrintCallback()]
         trainer = pl.Trainer(
-            gpus=list(range(torch.cuda.device_count())),
+            # gpus=list(range(torch.cuda.device_count())),
+            gpus=[1], # Someone's maxing out memory on gpu:0
             strategy='dp',
             callbacks=callbacks,
             # enable_progress_bar=False, # Doesn't fix Batches progress bar issue
@@ -342,18 +343,18 @@ if __name__ == "__main__":
     logging.debug(trainer)
 
     # TRAINING
-    # trainer.fit(model, train_loader)
+    trainer.fit(model, train_loader)
 
     # EVALUATION
     # # path_exp6 = os.path.join(PL_ASSETS_PATH, "version_70", "checkpoints", "epoch=15-step=4847.ckpt")
-    assets_version = "version_111"
-    checkpoint_path = os.path.join(PL_ASSETS_PATH, assets_version, "checkpoints")
-    checkpoint_filename = get_checkpoint_filename_from_dir(checkpoint_path)
-    checkpoint_path = os.path.join(checkpoint_path, checkpoint_filename)
-    print(checkpoint_path)
-    model = MultimodalFakeNewsDetectionModel.load_from_checkpoint(checkpoint_path)
-    trainer.test(model, dataloaders=test_loader)
-    results = model.test_results
-    print(test_data_path)
-    print(checkpoint_path)
-    print(results)
+    # assets_version = "version_133"
+    # checkpoint_path = os.path.join(PL_ASSETS_PATH, assets_version, "checkpoints")
+    # checkpoint_filename = get_checkpoint_filename_from_dir(checkpoint_path)
+    # checkpoint_path = os.path.join(checkpoint_path, checkpoint_filename)
+    # print(checkpoint_path)
+    # model = MultimodalFakeNewsDetectionModel.load_from_checkpoint(checkpoint_path)
+    # trainer.test(model, dataloaders=test_loader)
+    # results = model.test_results
+    # print(test_data_path)
+    # print(checkpoint_path)
+    # print(results)

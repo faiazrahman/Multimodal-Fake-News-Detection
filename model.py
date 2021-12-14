@@ -89,6 +89,21 @@ class JointVisualTextualModel(nn.Module):
 
         return (pred, loss)
 
+    @classmethod
+    def build_image_transform(cls, image_dim=224):
+        image_transform = torchvision.transforms.Compose([
+            torchvision.transforms.Resize(size=(image_dim, image_dim)),
+            torchvision.transforms.ToTensor(),
+            # All torchvision models expect the same normalization mean and std
+            # https://pytorch.org/docs/stable/torchvision/models.html
+            torchvision.transforms.Normalize(
+                mean=(0.485, 0.456, 0.406),
+                std=(0.229, 0.224, 0.225)
+            ),
+        ])
+
+        return image_transform
+
 class MultimodalFakeNewsDetectionModel(pl.LightningModule):
 
     def __init__(self, hparams=None):
@@ -237,6 +252,21 @@ class JointTextImageDialogueModel(nn.Module):
         pred = logits # nn.CrossEntropyLoss expects raw logits as model output # https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html
         loss = self.loss_fn(pred, label)
         return (pred, loss)
+
+    @classmethod
+    def build_image_transform(cls, image_dim=224):
+        image_transform = torchvision.transforms.Compose([
+            torchvision.transforms.Resize(size=(image_dim, image_dim)),
+            torchvision.transforms.ToTensor(),
+            # All torchvision models expect the same normalization mean and std
+            # https://pytorch.org/docs/stable/torchvision/models.html
+            torchvision.transforms.Normalize(
+                mean=(0.485, 0.456, 0.406),
+                std=(0.229, 0.224, 0.225)
+            ),
+        ])
+
+        return image_transform
 
 class MultimodalFakeNewsDetectionModelWithDialogue(pl.LightningModule):
 

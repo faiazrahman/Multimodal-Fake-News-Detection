@@ -33,7 +33,7 @@ NUM_CPUS = 0 # 24 on Yale Tangra server; Set to 0 and comment out next line if m
 # Configs
 # NUM_CLASSES=2, BATCH_SIZE=32, LEARNING_RATE=1e-5
 # NUM_CLASSES=6, BATCH_SIZE=32, LEARNING_RATE=1e-3 1e-4
-NUM_CLASSES = 2
+NUM_CLASSES = 3
 BATCH_SIZE = 32
 LEARNING_RATE = 1e-4 # 1e-3 1e-4 1e-5
 DROPOUT_P = 0.1
@@ -658,7 +658,7 @@ def test_out_dialogue_data():
     # trainer.fit(model, train_loader)
 
     ## EVALUATION
-    assets_version = "version_126"
+    assets_version = "version_130"
     checkpoint_path = os.path.join(PL_ASSETS_PATH, assets_version, "checkpoints")
     checkpoint_filename = get_checkpoint_filename_from_dir(checkpoint_path)
     checkpoint_path = os.path.join(checkpoint_path, checkpoint_filename)
