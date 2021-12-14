@@ -210,7 +210,8 @@ class MultimodalDataset(Dataset):
                 if (iteration % 250 == 0):
                     print("Generating summaries for item {}...".format(iteration))
                     # Save progress so far
-                    self.data_frame.to_pickle("./data/text_image_dialogue_dataframe.pkl")
+                    # self.data_frame.to_pickle("./data/text_image_dialogue_dataframe.pkl") # TODO make this scalable
+                    self.data_frame.to_pickle("./data/test__text_image_dialogue_dataframe.pkl")
 
                 try:
                     all_comments = df[df['submission_id'] == text_id]
@@ -242,7 +243,8 @@ class MultimodalDataset(Dataset):
                     failed_ids.append(text_id)
 
             # Dump main df into pkl (and figure out path convention)
-            self.data_frame.to_pickle("./data/text_image_dialogue_dataframe.pkl")
+            # self.data_frame.to_pickle("./data/text_image_dialogue_dataframe.pkl") # TODO make this scalable
+            self.data_frame.to_pickle("./data/test__text_image_dialogue_dataframe.pkl")
 
             print(self.data_frame)
             print(self.data_frame['comment_summary'])
@@ -277,7 +279,8 @@ class MultimodalDataset(Dataset):
             df.reset_index(drop=True, inplace=True)
             print("")
             print(df)
-            df.to_pickle("./data/comment_dataframe.pkl")
+            # df.to_pickle("./data/comment_dataframe.pkl") # TODO make this scalable
+            df.to_pickle("./data/test__comment_dataframe.pkl")
 
 class JointVisualTextualModel(nn.Module):
 
@@ -593,6 +596,10 @@ def get_checkpoint_filename_from_dir(path):
     return os.listdir(path)[0]
 
 def test_out_dialogue_data():
+
+    train_data_path = os.path.join(DATA_PATH, "multimodal_train_10000.tsv")
+    test_data_path = os.path.join(DATA_PATH, "multimodal_test_1000.tsv")
+
     df = pd.read_pickle("./data/text_image_dialogue_dataframe.pkl")
 
     text_embedder = SentenceTransformer('all-mpnet-base-v2')
@@ -607,10 +614,23 @@ def test_out_dialogue_data():
         num_classes=NUM_CLASSES
     )
     print(train_dataset)
-    print(train_dataset[0])
+    # print(train_dataset[0])
     print("train:", len(train_dataset))
 
+    test_dataset = MultimodalDataset(
+        from_preprocessed_dataframe="./data/test__text_image_dialogue_dataframe.pkl",
+        modality="text-image-dialogue",
+        text_embedder=text_embedder,
+        image_transform=image_transform,
+        images_dir=IMAGES_DIR,
+        num_classes=NUM_CLASSES
+    )
+    print(test_dataset)
+    # print(train_dataset[0])
+    print("test:", len(test_dataset))
+
     train_loader = DataLoader(train_dataset, batch_size=16, num_workers=NUM_CPUS)
+    test_loader = DataLoader(train_dataset, batch_size=16, num_workers=NUM_CPUS)
 
     hparams = {
         # "text_embedder": text_embedder,
@@ -634,7 +654,21 @@ def test_out_dialogue_data():
     logging.debug(trainer)
     print(trainer)
 
-    trainer.fit(model, train_loader)
+    # trainer.fit(model, train_loader)
+
+    assets_version = "version_124"
+    checkpoint_path = os.path.join(PL_ASSETS_PATH, assets_version, "checkpoints")
+    checkpoint_filename = get_checkpoint_filename_from_dir(checkpoint_path)
+    checkpoint_path = os.path.join(checkpoint_path, checkpoint_filename)
+    print(checkpoint_path)
+    # NOTE: MAKE SURE YOU'RE USING THE WithDialogue MODEL!!!
+    model = MultimodalFakeNewsDetectionModelWithDialogue.load_from_checkpoint(checkpoint_path)
+    trainer.test(model, dataloaders=test_loader)
+    results = model.test_results
+    print(test_data_path)
+    print(checkpoint_path)
+    print(results)
+
 
 
 if __name__ == "__main__":
@@ -676,7 +710,11 @@ if __name__ == "__main__":
     # print(df['id'])
     # # train_dataset._preprocess_dialogue()
     # train_dataset._preprocess_dialogue(from_saved_df_path="./data/comment_dataframe.pkl")
-    ###
+
+    # df = test_dataset.data_frame
+    # # test_dataset._preprocess_dialogue() # Currently does not generate summaries if you don't pass from_saved_df_path
+    # test_dataset._preprocess_dialogue(from_saved_df_path="./data/test__comment_dataframe.pkl")
+    # ###
 
     ### DIALOGUE DATASET
     # dialogue_train_dataset = MultimodalDataset(
