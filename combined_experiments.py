@@ -14,13 +14,11 @@ from PIL import Image
 
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader, random_split
+from torch.utils.data import Dataset, DataLoader
 import torchvision
-# from torchvision import transforms
 
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import Callback
-# from pytorch_lightning.logging import TensorBoardLogger
 from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 
 from sentence_transformers import SentenceTransformer
