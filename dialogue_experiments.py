@@ -33,7 +33,7 @@ NUM_CPUS = 0 # 24 on Yale Tangra server; Set to 0 and comment out next line if m
 # Configs
 # NUM_CLASSES=2, BATCH_SIZE=32, LEARNING_RATE=1e-5
 # NUM_CLASSES=6, BATCH_SIZE=32, LEARNING_RATE=1e-3 1e-4
-NUM_CLASSES = 3
+NUM_CLASSES = 6
 BATCH_SIZE = 32
 LEARNING_RATE = 1e-4 # 1e-3 1e-4 1e-5
 DROPOUT_P = 0.1
@@ -66,7 +66,8 @@ class MultimodalDataset(Dataset):
 
     def __init__(
         self,
-        data_path=None,
+        from_preprocessed_dataframe=None, # Path to preprocessed dataframe
+        data_path=None, # Path to data (i.e. not using preprocessed dataframe)
         modality=None,
         text_embedder=None,
         image_transform=None,
@@ -74,10 +75,18 @@ class MultimodalDataset(Dataset):
         num_classes=2,
         images_dir=IMAGES_DIR
     ):
-        df = pd.read_csv(data_path, sep='\t', header=0)
-        df = self._preprocess_df(df)
-        print(df.columns)
-        print(df['clean_title'])
+        df = None
+        if not from_preprocessed_dataframe:
+            df = pd.read_csv(data_path, sep='\t', header=0)
+            df = self._preprocess_df(df)
+            print(df.columns)
+            print(df['clean_title'])
+
+            # TODO: Dialogue preprocessing, if needed
+        else:
+            # TODO handle either a path str or a pd.DataFrame (check via isinstance)
+            df = pd.read_pickle(from_preprocessed_dataframe)
+
         self.data_frame = df
         logging.debug(self.data_frame)
         self.text_ids = set(self.data_frame['id'])
@@ -583,7 +592,57 @@ def _build_image_transform(image_dim=224):
 def get_checkpoint_filename_from_dir(path):
     return os.listdir(path)[0]
 
+def test_out_dialogue_data():
+    df = pd.read_pickle("./data/text_image_dialogue_dataframe.pkl")
+
+    text_embedder = SentenceTransformer('all-mpnet-base-v2')
+    image_transform = _build_image_transform()
+    # NOTE: THIS IS ONLY THE TRAIN DATASET!!!!
+    train_dataset = MultimodalDataset(
+        from_preprocessed_dataframe="./data/text_image_dialogue_dataframe.pkl",
+        modality="text-image-dialogue",
+        text_embedder=text_embedder,
+        image_transform=image_transform,
+        images_dir=IMAGES_DIR,
+        num_classes=NUM_CLASSES
+    )
+    print(train_dataset)
+    print(train_dataset[0])
+    print("train:", len(train_dataset))
+
+    train_loader = DataLoader(train_dataset, batch_size=16, num_workers=NUM_CPUS)
+
+    hparams = {
+        # "text_embedder": text_embedder,
+        "embedding_dim": SENTENCE_TRANSFORMER_EMBEDDING_DIM,
+        "num_classes": NUM_CLASSES
+    }
+    model = MultimodalFakeNewsDetectionModelWithDialogue(hparams)
+    trainer = None
+    if torch.cuda.is_available():
+        # Use all available GPUs with data parallel strategy
+        callbacks = [PrintCallback()]
+        trainer = pl.Trainer(
+            # gpus=list(range(torch.cuda.device_count())),
+            gpus=[1], # Someone is using GPU 0 and maxing out memory...
+            strategy='dp',
+            callbacks=callbacks,
+            # enable_progress_bar=False, # Doesn't fix Batches progress bar issue
+        )
+    else:
+        trainer = pl.Trainer()
+    logging.debug(trainer)
+    print(trainer)
+
+    trainer.fit(model, train_loader)
+
+
 if __name__ == "__main__":
+
+    test_out_dialogue_data()
+    assert(1 == 2)
+
+
     train_data_path = os.path.join(DATA_PATH, "multimodal_train_10000.tsv")
     test_data_path = os.path.join(DATA_PATH, "multimodal_test_1000.tsv")
 
