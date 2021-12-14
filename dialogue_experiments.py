@@ -33,7 +33,7 @@ NUM_CPUS = 0 # 24 on Yale Tangra server; Set to 0 and comment out next line if m
 # Configs
 # NUM_CLASSES=2, BATCH_SIZE=32, LEARNING_RATE=1e-5
 # NUM_CLASSES=6, BATCH_SIZE=32, LEARNING_RATE=1e-3 1e-4
-NUM_CLASSES = 3
+NUM_CLASSES = 2
 BATCH_SIZE = 16 # TODO 32 usually, 16 for 1 GPU
 LEARNING_RATE = 1e-4 # 1e-3 1e-4 1e-5
 DROPOUT_P = 0.1
@@ -655,21 +655,21 @@ def test_out_dialogue_data():
     print(trainer)
 
     ## TRAINING
-    # trainer.fit(model, train_loader)
+    trainer.fit(model, train_loader)
 
     ## EVALUATION
-    assets_version = "version_139"
-    checkpoint_path = os.path.join(PL_ASSETS_PATH, assets_version, "checkpoints")
-    checkpoint_filename = get_checkpoint_filename_from_dir(checkpoint_path)
-    checkpoint_path = os.path.join(checkpoint_path, checkpoint_filename)
-    print(checkpoint_path)
-    # NOTE: MAKE SURE YOU'RE USING THE WithDialogue MODEL!!!
-    model = MultimodalFakeNewsDetectionModelWithDialogue.load_from_checkpoint(checkpoint_path)
-    trainer.test(model, dataloaders=test_loader)
-    results = model.test_results
-    print(test_data_path)
-    print(checkpoint_path)
-    print(results)
+    # assets_version = "version_139"
+    # checkpoint_path = os.path.join(PL_ASSETS_PATH, assets_version, "checkpoints")
+    # checkpoint_filename = get_checkpoint_filename_from_dir(checkpoint_path)
+    # checkpoint_path = os.path.join(checkpoint_path, checkpoint_filename)
+    # print(checkpoint_path)
+    # # NOTE: MAKE SURE YOU'RE USING THE WithDialogue MODEL!!!
+    # model = MultimodalFakeNewsDetectionModelWithDialogue.load_from_checkpoint(checkpoint_path)
+    # trainer.test(model, dataloaders=test_loader)
+    # results = model.test_results
+    # print(test_data_path)
+    # print(checkpoint_path)
+    # print(results)
 
 
 
