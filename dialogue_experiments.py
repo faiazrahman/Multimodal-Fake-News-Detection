@@ -658,7 +658,7 @@ def test_out_dialogue_data():
     # trainer.fit(model, train_loader)
 
     ## EVALUATION
-    assets_version = "version_143"
+    assets_version = "version_147"
     checkpoint_path = os.path.join(PL_ASSETS_PATH, assets_version, "checkpoints")
     checkpoint_filename = get_checkpoint_filename_from_dir(checkpoint_path)
     checkpoint_path = os.path.join(checkpoint_path, checkpoint_filename)
