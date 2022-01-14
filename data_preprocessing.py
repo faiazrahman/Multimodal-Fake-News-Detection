@@ -13,13 +13,13 @@ from tqdm import tqdm
 import yaml
 
 from dataloader import MultimodalDataset, Modality
-from model import JointVisualTextualModel, JointTextImageDialogueModel
+from model import JointTextImageModel, JointTextImageDialogueModel
 
 from sentence_transformers import SentenceTransformer
 
 DATA_PATH = "./data"
 IMAGES_DIR = os.path.join(DATA_PATH, "images")
-TRAIN_DATA_SIZE = 100 # TODO 10000
+TRAIN_DATA_SIZE = 10000
 TEST_DATA_SIZE = 1000
 
 logging.basicConfig(level=logging.INFO) # DEBUG, INFO, WARNING, ERROR, CRITICAL
@@ -29,6 +29,7 @@ if __name__ == "__main__":
     parser.add_argument("--train", action="store_true", help="Running on training data")
     parser.add_argument("--test", action="store_true", help="Running on test (evaluation) data")
     parser.add_argument("--from_dialogue_dataframe", type=str, default=None, help="If you're using dialogue (comment) data and have already filtered the dialogue dataframe, pass the path to its serialized .pkl file to continue preprocessing from that point on")
+    parser.add_argument("--dir_to_save_dataframe", type=str, default="data", help="Path to store saved dataframe .pkl file after data preprocessing")
     parser.add_argument("--config", type=str, default="", help="config.yaml file with experiment configuration")
     args = parser.parse_args()
 
@@ -50,7 +51,7 @@ if __name__ == "__main__":
     if Modality(args.modality) == Modality.TEXT_IMAGE_DIALOGUE:
         image_transform = JointTextImageDialogueModel.build_image_transform()
     else:
-        image_transform = JointVisualTextualModel.build_image_transform()
+        image_transform = JointTextImageModel.build_image_transform()
 
     if args.train:
         # Calling the MultimodalDataset constructor (i.e. __init__) will run
@@ -58,10 +59,11 @@ if __name__ == "__main__":
         # into a serialized .pkl file; the path to that .pkl file can then be
         # passed as the `processed_dataframe_path` arg in the config for training
         # and evaluation
-        # TODO Add dataset.path_to_saved_dataframe field and print that out at end of script
         train_dataset = MultimodalDataset(
             from_dialogue_dataframe=args.from_dialogue_dataframe,
             data_path=args.train_data_path,
+            dir_to_save_dataframe=args.dir_to_save_dataframe,
+            dataset_type="train",
             modality=args.modality,
             text_embedder=text_embedder,
             image_transform=image_transform,
@@ -77,6 +79,8 @@ if __name__ == "__main__":
         test_dataset = MultimodalDataset(
             from_dialogue_dataframe=args.from_dialogue_dataframe,
             data_path=args.train_data_path,
+            dir_to_save_dataframe=args.dir_to_save_dataframe,
+            dataset_type="test",
             modality=args.modality,
             text_embedder=text_embedder,
             image_transform=image_transform,

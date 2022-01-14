@@ -1,16 +1,5 @@
-import sys
 import os
-from pathlib import Path
 import logging
-import argparse
-import enum
-
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from tqdm import tqdm
-
-from PIL import Image
 
 import torch
 import torch.nn as nn
@@ -24,9 +13,6 @@ from pytorch_lightning.callbacks.early_stopping import EarlyStopping
 from sentence_transformers import SentenceTransformer
 
 import transformers
-
-NUM_CPUS = 0 # 24 on Yale Tangra server; Set to 0 and comment out next line if multiprocessing gives errors
-# torch.multiprocessing.set_start_method('spawn')
 
 NUM_CLASSES = 2
 BATCH_SIZE = 32
@@ -47,7 +33,7 @@ logging.basicConfig(level=logging.INFO) # DEBUG, INFO, WARNING, ERROR, CRITICAL
 
 print("CUDA available:", torch.cuda.is_available())
 
-class JointVisualTextualModel(nn.Module):
+class JointTextImageModel(nn.Module):
 
     def __init__(
             self,
@@ -61,7 +47,7 @@ class JointVisualTextualModel(nn.Module):
             dropout_p,
             hidden_size=512,
         ):
-        super(JointVisualTextualModel, self).__init__()
+        super(JointTextImageModel, self).__init__()
         self.text_module = text_module
         self.image_module = image_module
         self.fusion = torch.nn.Linear(in_features=(text_feature_dim + image_feature_dim),
@@ -198,7 +184,7 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
         image_module.fc = torch.nn.Linear(
             in_features=RESNET_OUT_DIM, out_features=self.image_feature_dim)
 
-        return JointVisualTextualModel(
+        return JointTextImageModel(
             num_classes=self.hparams.get("num_classes", NUM_CLASSES),
             loss_fn=torch.nn.CrossEntropyLoss(),
             text_module=text_module,

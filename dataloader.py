@@ -37,10 +37,11 @@ class MultimodalDataset(Dataset):
 
     def __init__(
         self,
-        from_preprocessed_dataframe=None,
-        from_dialogue_dataframe=None,
+        from_preprocessed_dataframe=None, # Preprocessed dataframe to load from
+        from_dialogue_dataframe=None, # Partially preprocessed df to load from
         data_path=None, # Path to data (i.e. not using preprocessed dataframe),
-        type="train",
+        dir_to_save_dataframe="data", # Save the preprocessed dataframe here
+        dataset_type="train",
         modality=None,
         text_embedder=None,
         image_transform=None,
@@ -74,7 +75,8 @@ class MultimodalDataset(Dataset):
             elif isinstance(from_preprocessed_dataframe, str):
                 df = pd.read_pickle(from_preprocessed_dataframe)
             else:
-                raise Exception("MultimodalDataset given invalid from_preprocessed_dataframe arg; Must be path (str) to dataframe or pd.DataFrame")
+                raise Exception("MultimodalDataset given invalid from_preprocessed_dataframe arg; \
+                                 Must be path (str) to dataframe or pd.DataFrame")
 
         self.data_frame = df
         self.text_ids = set(self.data_frame['id'])
@@ -98,6 +100,18 @@ class MultimodalDataset(Dataset):
             self.summarizer = transformers.pipeline("summarization", model=summarization_model)
         elif Modality(modality) == Modality.TEXT_IMAGE_DIALOGUE:
             self.summarizer = transformers.pipeline("summarization")
+
+        self.dataset_type = dataset_type
+        self.dir_to_save_dataframe = dir_to_save_dataframe
+        self.saved_dataframe_filename_prefix = ""
+        if Modality(modality) == Modality.TEXT:
+            self.saved_dataframe_filename_prefix = "text"
+        elif Modality(modality) == Modality.IMAGE:
+            self.saved_dataframe_filename_prefix = "image"
+        elif Modality(modality) == Modality.TEXT_IMAGE:
+            self.saved_dataframe_filename_prefix = "text_image"
+        elif Modality(modality) == Modality.TEXT_IMAGE_DIALOGUE:
+            self.saved_dataframe_filename_prefix = "text_image_dialogue"
 
         return
 
@@ -134,11 +148,13 @@ class MultimodalDataset(Dataset):
             "label": label
         }
 
-        if Modality(self.modality) in [Modality.TEXT, Modality.TEXT_IMAGE, Modality.TEXT_IMAGE_DIALOGUE]:
+        if Modality(self.modality) in [Modality.TEXT, Modality.TEXT_IMAGE, \
+                                       Modality.TEXT_IMAGE_DIALOGUE]:
             text = self.data_frame.loc[idx, 'clean_title']
             text = self.text_embedder.encode(text, convert_to_tensor=True)
             item["text"] = text
-        if Modality(self.modality) in [Modality.IMAGE, Modality.TEXT_IMAGE, Modality.TEXT_IMAGE_DIALOGUE]:
+        if Modality(self.modality) in [Modality.IMAGE, Modality.TEXT_IMAGE, \
+                                       Modality.TEXT_IMAGE_DIALOGUE]:
             image_path = os.path.join(IMAGES_DIR, item_id + IMAGE_EXTENSION)
             image = Image.open(image_path).convert("RGB")
             image = self.image_transform(image)
@@ -150,8 +166,7 @@ class MultimodalDataset(Dataset):
 
         return item
 
-    @staticmethod
-    def _preprocess_df(df):
+    def _preprocess_df(self, df):
         def image_exists(row):
             """ Ensures that image exists and can be opened """
             image_path = os.path.join(IMAGES_DIR, row['id'] + IMAGE_EXTENSION)
@@ -170,14 +185,27 @@ class MultimodalDataset(Dataset):
         df = df[df['image_exists'] == True].drop('image_exists', axis=1)
         df = df.drop(['created_utc', 'domain', 'hasImage', 'image_url'], axis=1)
         df.reset_index(drop=True, inplace=True)
-        # TODO: dump this df into a pickle with a unique filename
+
+        # Save this dataframe into a pickle
+        # Filename will look something like "train__text_image_dialogue__dataframe.pkl"
+        filename = "__".join([self.dataset_type, self.saved_dataframe_filename_prefix, "dataframe.pkl"])
+        save_path = os.path.join(self.dir_to_save_dataframe, filename)
+        df.to_pickle(save_path)
+        print("Preprocessed dataframe saved to {}".format(save_path))
+        logging.info("Preprocessed dataframe saved to {}".format(save_path))
+
         return df
 
     def _preprocess_dialogue(self, from_saved_df_path=""):
         """ A comment's 'submission_id' is linked (i.e. equal) to a post's 'id'
         and 'body' contains the comment text and 'ups' contains upvotes """
 
-        def generate_summaries_and_save_df(df):
+        # Save this dialogue dataframe into a pickle
+        # Filename will look something like "train__text_image_dialogue__dialogue_dataframe.pkl"
+        filename = "__".join([self.dataset_type, self.saved_dataframe_filename_prefix, "dialogue_dataframe.pkl"])
+        save_path = os.path.join(self.dir_to_save_dataframe, filename)
+
+        def generate_summaries_and_save_df(df, save_path="data"):
             # Add new column in main dataframe to hold dialogue summaries
             self.data_frame['comment_summary'] = ""
 
@@ -186,9 +214,7 @@ class MultimodalDataset(Dataset):
                 if (iteration % 250 == 0):
                     print("Generating summaries for item {}...".format(iteration))
                     # Save progress so far
-                    # TODO make this scalable
-                    # self.data_frame.to_pickle("./data/text_image_dialogue_dataframe.pkl") # TODO
-                    self.data_frame.to_pickle("./data/test__text_image_dialogue_dataframe.pkl") # TODO
+                    self.data_frame.to_pickle(save_path)
 
                 try:
                     # Group comments by post id
@@ -217,10 +243,10 @@ class MultimodalDataset(Dataset):
                 except:
                     failed_ids.append(text_id)
 
-            # Dump main df into pkl (and figure out path convention)
-            # TODO make this scalable
-            # self.data_frame.to_pickle("./data/text_image_dialogue_dataframe.pkl") # TODO
-            self.data_frame.to_pickle("./data/test__text_image_dialogue_dataframe.pkl") # TODO
+            # Save final dialogue dataframe
+            self.data_frame.to_pickel(save_path)
+            print("Preprocessed dialogue dataframe saved to {}".format(save_path))
+            logging.info("Preprocessed dialogue dataframe saved to {}".format(save_path))
 
             logging.debug(self.data_frame)
             logging.debug(self.data_frame['comment_summary'])
@@ -230,7 +256,7 @@ class MultimodalDataset(Dataset):
         if from_saved_df_path != "":
             # Special Case (see above comment in __init__)
             df = pd.read_pickle(from_saved_df_path)
-            generate_summaries_and_save_df(df)
+            generate_summaries_and_save_df(df, save_path=save_path)
         else:
             df = pd.read_csv("./data/all_comments.tsv", sep='\t')
             logging.debug(df)
@@ -253,7 +279,7 @@ class MultimodalDataset(Dataset):
             df.reset_index(drop=True, inplace=True)
             logging.debug(df)
 
-            # TODO make this scalable
-            # df.to_pickle("./data/comment_dataframe.pkl") # TODO
-            df.to_pickle("./data/test__comment_dataframe.pkl") # TODO
-            generate_summaries_and_save_df(df)
+            # Save dataframe so far before summary generation
+            df.to_pickle(save_path)
+
+            generate_summaries_and_save_df(df, save_path=save_path)

@@ -282,7 +282,7 @@ class MultimodalDataset(Dataset):
             # df.to_pickle("./data/comment_dataframe.pkl") # TODO make this scalable
             df.to_pickle("./data/test__comment_dataframe.pkl")
 
-class JointVisualTextualModel(nn.Module):
+class JointTextImageModel(nn.Module):
 
     def __init__(
             self,
@@ -296,7 +296,7 @@ class JointVisualTextualModel(nn.Module):
             dropout_p,
             hidden_size=512,
         ):
-        super(JointVisualTextualModel, self).__init__()
+        super(JointTextImageModel, self).__init__()
         self.text_module = text_module
         self.image_module = image_module
         self.fusion = torch.nn.Linear(in_features=(text_feature_dim + image_feature_dim),
@@ -407,7 +407,7 @@ class MultimodalFakeNewsDetectionModel(pl.LightningModule):
         image_module.fc = torch.nn.Linear(
             in_features=RESNET_OUT_DIM, out_features=self.image_feature_dim)
 
-        return JointVisualTextualModel(
+        return JointTextImageModel(
             num_classes=self.hparams.get("num_classes", NUM_CLASSES),
             loss_fn=torch.nn.CrossEntropyLoss(),
             text_module=text_module,

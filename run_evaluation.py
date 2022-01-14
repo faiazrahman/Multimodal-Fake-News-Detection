@@ -23,7 +23,7 @@ import pytorch_lightning as pl
 from sentence_transformers import SentenceTransformer
 
 from dataloader import MultimodalDataset, Modality
-from model import JointVisualTextualModel, JointTextImageDialogueModel, MultimodalFakeNewsDetectionModel, MultimodalFakeNewsDetectionModelWithDialogue, PrintCallback
+from model import JointTextImageModel, JointTextImageDialogueModel, MultimodalFakeNewsDetectionModel, MultimodalFakeNewsDetectionModelWithDialogue, PrintCallback
 
 # Multiprocessing for dataset batching: NUM_CPUS=24 on Yale Tangra server
 # Set to 0 and comment out torch.multiprocessing line if multiprocessing gives errors
@@ -76,7 +76,7 @@ if __name__ == "__main__":
     if Modality(args.modality) == Modality.TEXT_IMAGE_DIALOGUE:
         image_transform = JointTextImageDialogueModel.build_image_transform()
     else:
-        image_transform = JointVisualTextualModel.build_image_transform()
+        image_transform = JointTextImageModel.build_image_transform()
 
     test_dataset = MultimodalDataset(
         from_preprocessed_dataframe=args.preprocessed_test_dataframe_path,

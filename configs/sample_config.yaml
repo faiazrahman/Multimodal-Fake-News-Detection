@@ -1,4 +1,4 @@
-modality: "text-image" # "text-image" | "text-image-dialogue"
+modality: "text-image" # "text" | "image" | "text-image" | "text-image-dialogue"
 num_classes: 6 # 2 | 3 | 6
 batch_size: 32 # (int)
 learning_rate: 1.0e-4 # (float) Note that the mantissa must have a decimal point to be parsed by YAML as a float (and not a str)
@@ -6,10 +6,10 @@ num_epochs: 10 # (int)
 dropout_p: 0.1 # (float)
 text_embedder: "all-mpnet-base-v2" # "all-mpnet-base-v2" | "all-distilroberta-v1"
 dialogue_summarization_model: null # None=Transformers.Pipeline default i.e. "sshleifer/distilbart-cnn-12-6" | "bart-large-cnn" | "t5-small" | "t5-base" | "t5-large"
-trained_model_version: 1 # (int)
-trained_model_path: null # (str)
-gpus: [0, 1] # [0] | [1] | [0, 1] Note that it must be a list of ints
 train_data_path: "./data/multimodal_train_10000.tsv" # (str)
 test_data_path: "./data/multimodal_test_1000.tsv" # (str)
 preprocessed_train_dataframe_path: "./data/train__text_image_dataframe.pkl" # (str)
 preprocessed_train_dataframe_path: "./data/test__text_image_dataframe.pkl" # (str)
+gpus: [0, 1] # [0] | [1] | [0, 1] Note that it must be a list of ints
+trained_model_version: 1 # (int)
+trained_model_path: null # (str)
