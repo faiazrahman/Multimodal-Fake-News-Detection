@@ -30,7 +30,7 @@ The configuration files in `configs/` contain all of the parameters for running 
 
 ### Training
 
-For training, to allow for flexible hyperparameter tuning, you can use a specified config file (which contains the settings for a specific experiment) but then also override specific hyperparameters via command-line arguments. For example, if you run `python run_traiing --config some_config.yaml --learning_rate 0.001`, it will use a learning rate of `0.001` (regardless of whatever learning rate is specified in the config), and then for all other hyperparameters, it will use the value in the config file.
+For training, to allow for flexible hyperparameter tuning, you can use a specified config file (which contains the settings for a specific experiment) but then also override specific hyperparameters via command-line arguments. For example, if you run `python run_training --config some_config.yaml --learning_rate 0.001`, it will use a learning rate of `0.001` (regardless of whatever learning rate is specified in the config), and then for all other hyperparameters, it will use the value in the config file.
 
 Note that if neither a config file nor command-line args are specified, the default values in the `run_training.py` script will be used.
 
