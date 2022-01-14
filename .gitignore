@@ -4,3 +4,4 @@ data/*.pkl
 lightning_logs/*
 deprecated.py
 paper/*
+old_requirements.txt
