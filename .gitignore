@@ -1,7 +1,6 @@
 data/images/*
 data/*.tsv
 data/*.pkl
-lightning_logs/*
 deprecated.py
 paper/*
 old_requirements.txt
