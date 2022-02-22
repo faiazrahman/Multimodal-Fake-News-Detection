@@ -22,6 +22,12 @@ pip install -r requirements.txt
 python image_downloader.py
 ```
 
+Note: If you're still getting a `ModuleNotFound` error after `pip install -r requirements.txt`, that probably just means that things were installed in the wrong place. Try running the following to make sure that your dependencies are installed in the right place for your virtual environment.
+
+```
+python -m pip install -r requirements.txt
+```
+
 ## Running Experiments
 
 We run experiments to compare (1) the performance of text-image multi-modal models with text- image-dialogue multi-modal models, and (2) the performance of different text encoder models. We do not compare with single-modal models, since Nakamura et al. (2020) already compared text-image multi-modal models with single-modal text and single-modal image models and found that the multi-modal approach indeed had better performance. Thus, we focus on quantifying the performance of including dialogue data via dialogue summarization.
