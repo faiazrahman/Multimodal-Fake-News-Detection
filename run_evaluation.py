@@ -106,9 +106,9 @@ if __name__ == "__main__":
     checkpoint_path = None
     if args.trained_model_version:
         assets_version = None
-        if isinstance(int, args.trained_model_version):
+        if isinstance(args.trained_model_version, int):
             assets_version = "version_" + str(args.trained_model_version)
-        elif isinstance(str, args.trained_model_version):
+        elif isinstance(args.trained_model_version, str):
             assets_version = args.trained_model_version
         else:
             raise Exception("assets_version must be either an int (i.e. the version number, e.g. 16) or a str (e.g. \"version_16\"")
