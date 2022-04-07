@@ -78,7 +78,7 @@ if __name__ == "__main__":
         # See comment above
         test_dataset = MultimodalDataset(
             from_dialogue_dataframe=args.from_dialogue_dataframe,
-            data_path=args.train_data_path,
+            data_path=args.test_data_path,
             dir_to_save_dataframe=args.dir_to_save_dataframe,
             dataset_type="test",
             modality=args.modality,
