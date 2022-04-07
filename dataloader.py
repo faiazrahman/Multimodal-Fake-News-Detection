@@ -244,7 +244,7 @@ class MultimodalDataset(Dataset):
                     failed_ids.append(text_id)
 
             # Save final dialogue dataframe
-            self.data_frame.to_pickel(save_path)
+            self.data_frame.to_pickle(save_path)
             print("Preprocessed dialogue dataframe saved to {}".format(save_path))
             logging.info("Preprocessed dialogue dataframe saved to {}".format(save_path))
 
